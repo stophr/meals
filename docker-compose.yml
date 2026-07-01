@@ -1,0 +1,63 @@
+# Self-hosted stack: postgres + api + web. `docker compose up --build`.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-meals}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meals}
+      POSTGRES_DB: ${POSTGRES_DB:-meals}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-meals}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    working_dir: /repo
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-meals}:${POSTGRES_PASSWORD:-meals}@postgres:5432/${POSTGRES_DB:-meals}?schema=public
+      API_PORT: '3001'
+      API_HOST: 0.0.0.0
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      # OCR: local vision model by default. host.docker.internal reaches a server on the host.
+      OCR_PROVIDER: ${OCR_PROVIDER:-local}
+      OCR_LOCAL_BASE_URL: ${OCR_LOCAL_BASE_URL:-http://host.docker.internal:11434/v1}
+      OCR_LOCAL_MODEL: ${OCR_LOCAL_MODEL:-qwen2.5vl:3b}
+      OCR_LOCAL_API_KEY: ${OCR_LOCAL_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OCR_MODEL: ${OCR_MODEL:-claude-sonnet-5}
+      OCR_ESCALATION_MODEL: ${OCR_ESCALATION_MODEL:-claude-opus-4-8}
+      NODE_ENV: production
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    # Sync the schema (MVP uses db push; switch to migrate deploy once migrations exist), then serve.
+    command: sh -c "pnpm --filter @meals/db push && pnpm --filter @meals/api start"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '3001:3001'
+    volumes:
+      - storage:/repo/apps/api/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3001}
+    depends_on:
+      - api
+    ports:
+      - '8080:80'
+
+volumes:
+  pgdata:
+  storage:

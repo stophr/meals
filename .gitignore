@@ -1,0 +1,34 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# prisma generated client
+packages/db/generated/
+
+# env
+.env
+.env.local
+*.local
+
+# uploads / object storage (dev volume)
+uploads/
+storage/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test / coverage
+coverage/

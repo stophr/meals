@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/build
+packages/db/generated
+.git
+*.log
+storage
+uploads
+.env

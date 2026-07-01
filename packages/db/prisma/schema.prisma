@@ -1,0 +1,455 @@
+// Meals — data model.
+//
+// Central modeling split (see plan "Data model — the crux"):
+//   CanonicalItem   = store-agnostic concept ("2% milk, 1 gal"). Recipes, inventory,
+//                     and shopping lists reference this.
+//   ProviderProduct = one specific store's listing/SKU. Prices attach here.
+//   CanonicalItem 1—* ProviderProduct ; the link is established by the matcher + human review.
+//
+// Unit normalization: every quantity is stored twice — as entered (value + Unit) and
+// normalized to a base unit per dimension (MASS->g, VOLUME->ml, COUNT->each). Price
+// comparisons and the optimizer run purely on base units.
+//
+// Everything is scoped by householdId so multi-user (Phase 3) is additive, not a rewrite.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UnitDimension {
+  MASS
+  VOLUME
+  COUNT
+}
+
+enum Unit {
+  // mass
+  MG
+  G
+  KG
+  OZ
+  LB
+  // volume
+  ML
+  L
+  FLOZ
+  CUP
+  TBSP
+  TSP
+  // count
+  EACH
+  PACK
+  BUNCH
+  CAN
+  BOTTLE
+}
+
+enum PriceSource {
+  MANUAL
+  OCR
+  SCRAPE
+}
+
+enum JobType {
+  OCR_RECEIPT
+  OCR_FLYER
+  SCRAPE
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  NEEDS_REVIEW
+  DONE
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Household / users
+// ---------------------------------------------------------------------------
+
+model Household {
+  id       String  @id @default(cuid())
+  name     String
+  homeLat  Float?
+  homeLng  Float?
+  currency String  @default("USD")
+  // Lambda: money value of one shopping minute, used by the time-vs-savings optimizer.
+  timeValuePerMinute Decimal @default("0.25") @db.Decimal(10, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  providers      Provider[]
+  canonicalItems CanonicalItem[]
+  recipes        Recipe[]
+  inventory      InventoryLot[]
+  mealPlans      MealPlan[]
+  shoppingLists  ShoppingList[]
+  jobs           IngestionJob[]
+}
+
+// Row exists now so FKs are stable; auth is deferred to Phase 3.
+model User {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  email       String    @unique
+  displayName String?
+  role        String    @default("owner")
+  createdAt   DateTime  @default(now())
+
+  @@index([householdId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog: canonical items <-> per-provider products
+// ---------------------------------------------------------------------------
+
+model CanonicalItem {
+  id          String     @id @default(cuid())
+  householdId String
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name     String
+  brand    String?
+  category String?
+
+  // Default pack presentation (informational; concrete packs live on ProviderProduct).
+  packSize Decimal? @db.Decimal(12, 4)
+  packUnit Unit?
+
+  // Base-unit facts used for price-per-unit math.
+  baseUnit      Unit?
+  baseDimension UnitDimension?
+
+  // Bridge for a future recipe<->purchase density conversion (out of MVP scope).
+  recipeUnit   Unit?
+  purchaseUnit Unit?
+
+  // Normalized dedup key (lowercased, unit/pack stripped) — used by the matcher.
+  normKey String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products          ProviderProduct[]
+  recipeIngredients RecipeIngredient[]
+  inventory         InventoryLot[]
+  shoppingListItems ShoppingListItem[]
+
+  @@index([householdId, normKey])
+  @@index([householdId, name])
+}
+
+model Provider {
+  id          String     @id @default(cuid())
+  householdId String
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name    String
+  type    String  @default("grocery")
+  address String?
+  lat     Float?
+  lng     Float?
+
+  // Round-trip visit cost inputs for the optimizer.
+  travelMinutes Int?
+  travelKm      Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products ProviderProduct[]
+  aliases  ProductAlias[]
+
+  @@index([householdId])
+}
+
+model ProviderProduct {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  // Null until matched to a canonical item (matcher + human review).
+  canonicalItemId String?
+  canonicalItem   CanonicalItem? @relation(fields: [canonicalItemId], references: [id], onDelete: SetNull)
+
+  rawName  String
+  brand    String?
+  sizeText String?
+
+  // Concrete pack for this listing + its base-unit expansion.
+  packSize     Decimal? @db.Decimal(12, 4)
+  packUnit     Unit?
+  baseQuantity Decimal? @db.Decimal(14, 4)
+
+  upc String?
+  plu String?
+  sku String?
+  url String?
+  imageUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices  PriceObservation[]
+  aliases ProductAlias[]
+
+  @@unique([providerId, upc])
+  @@index([providerId])
+  @@index([canonicalItemId])
+  @@index([upc])
+}
+
+// Learned rawName -> product mapping, persisted from every human review decision so the
+// next identical line auto-matches.
+model ProductAlias {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  normalizedRawName String
+  providerProductId String
+  providerProduct   ProviderProduct @relation(fields: [providerProductId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([providerId, normalizedRawName])
+  @@index([providerProductId])
+}
+
+model PriceObservation {
+  id                String          @id @default(cuid())
+  providerProductId String
+  providerProduct   ProviderProduct @relation(fields: [providerProductId], references: [id], onDelete: Cascade)
+
+  price            Decimal  @db.Decimal(12, 2)
+  pricePerBaseUnit Decimal? @db.Decimal(14, 6)
+  currency         String   @default("USD")
+
+  isDeal        Boolean  @default(false)
+  dealType      String?
+  multiBuyQty   Int?
+  multiBuyPrice Decimal? @db.Decimal(12, 2)
+  regularPrice  Decimal? @db.Decimal(12, 2)
+
+  validFrom  DateTime  @default(now())
+  validTo    DateTime?
+  observedAt DateTime  @default(now())
+
+  source     PriceSource
+  confidence Float?
+  rawText    String?
+
+  @@index([providerProductId, validFrom])
+  @@index([providerProductId, validTo])
+}
+
+// ---------------------------------------------------------------------------
+// Recipes
+// ---------------------------------------------------------------------------
+
+model Recipe {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name         String
+  servings     Int      @default(1)
+  instructions String?
+  sourceUrl    String?
+  prepMinutes  Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ingredients   RecipeIngredient[]
+  mealPlanEntries MealPlanEntry[]
+
+  @@index([householdId])
+}
+
+model RecipeIngredient {
+  id       String @id @default(cuid())
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  // Null + freeText until mapped to a canonical item.
+  canonicalItemId String?
+  canonicalItem   CanonicalItem? @relation(fields: [canonicalItemId], references: [id], onDelete: SetNull)
+  freeText        String?
+
+  quantity     Decimal  @db.Decimal(12, 4)
+  unit         Unit
+  baseQuantity Decimal? @db.Decimal(14, 4)
+  prepNote     String?
+  optional     Boolean  @default(false)
+
+  @@index([recipeId])
+  @@index([canonicalItemId])
+}
+
+// ---------------------------------------------------------------------------
+// Inventory (lot-based for expiry / FIFO)
+// ---------------------------------------------------------------------------
+
+model InventoryLot {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  canonicalItemId String
+  canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
+
+  quantity     Decimal  @db.Decimal(12, 4)
+  unit         Unit
+  baseQuantity Decimal  @db.Decimal(14, 4)
+
+  location    String?
+  purchasedAt DateTime  @default(now())
+  expiresAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId, canonicalItemId])
+  @@index([householdId, expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Meal plan -> shopping list
+// ---------------------------------------------------------------------------
+
+model MealPlan {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name      String?
+  startDate DateTime
+  endDate   DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries       MealPlanEntry[]
+  shoppingLists ShoppingList[]
+
+  @@index([householdId])
+}
+
+model MealPlanEntry {
+  id         String   @id @default(cuid())
+  mealPlanId String
+  mealPlan   MealPlan @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  date            DateTime
+  slot            String   @default("dinner")
+  servingsPlanned Int      @default(1)
+
+  @@index([mealPlanId])
+  @@index([recipeId])
+}
+
+model ShoppingList {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  mealPlanId String?
+  mealPlan   MealPlan? @relation(fields: [mealPlanId], references: [id], onDelete: SetNull)
+
+  name   String?
+  status String @default("draft") // draft | optimized | shopping | done
+
+  // Cached optimizer result (chosen option + alternatives) for offline/in-store use.
+  optimizationResult Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items ShoppingListItem[]
+
+  @@index([householdId])
+  @@index([mealPlanId])
+}
+
+model ShoppingListItem {
+  id             String       @id @default(cuid())
+  shoppingListId String
+  shoppingList   ShoppingList @relation(fields: [shoppingListId], references: [id], onDelete: Cascade)
+
+  canonicalItemId String
+  canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
+
+  quantityNeeded     Decimal @db.Decimal(12, 4)
+  unit               Unit
+  baseQuantityNeeded Decimal @db.Decimal(14, 4)
+
+  // Filled by the optimizer / user overrides.
+  assignedProviderId String?
+  chosenProductId    String?
+  estimatedPrice     Decimal? @db.Decimal(12, 2)
+
+  status String @default("pending") // pending | bought | skipped
+
+  @@index([shoppingListId])
+  @@index([canonicalItemId])
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion jobs (OCR / scrape) + staging lines before confirmation
+// ---------------------------------------------------------------------------
+
+model IngestionJob {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  type       JobType
+  status     JobStatus @default(QUEUED)
+  providerId String?
+  inputRef   String? // storage path / URL of the source image or page
+  result     Json?
+  error      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines ExtractionLine[]
+
+  @@index([householdId, status])
+}
+
+model ExtractionLine {
+  id    String       @id @default(cuid())
+  jobId String
+  job   IngestionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  rawName    String
+  quantity   Decimal? @db.Decimal(12, 4)
+  unit       String?
+  unitPrice  Decimal? @db.Decimal(12, 2)
+  totalPrice Decimal? @db.Decimal(12, 2)
+
+  // Matcher suggestion; confirmed/edited in the review UI.
+  matchProductId  String?
+  matchConfidence Float?
+  status          String  @default("pending") // pending | confirmed | rejected | new
+
+  @@index([jobId])
+}
