@@ -66,13 +66,25 @@ export interface ClaudeOcrConfig {
 }
 
 export const RECEIPT_PROMPT = `You are extracting structured line items from a photo of a grocery receipt or store flyer.
-Return every purchasable line item you can read. For each line:
-- rawName: the item text exactly as printed (keep abbreviations, e.g. "GV MLK 2% 1G")
-- quantity / unit: only if printed; otherwise null
-- unitPrice / totalPrice: numeric prices without currency symbols; null if not shown
-- isDeal: true if the line is a sale/multi-buy/loyalty price
+Read the image row by row. Each line item is one horizontal row: the item text is on the left and
+the price for THAT row is on the far right of the SAME row. Align each price with the item on its
+own row — do not shift prices between rows.
+
+Return every purchasable line item. For each line:
+- rawName: the full item text as printed, INCLUDING any size/pack info (e.g. "Milk 2% 1gal",
+  "All-Purpose Flour 2kg"). Keep abbreviations.
+- totalPrice: the price printed on that row (this is the amount that sums to the receipt total).
+  Put the row's price HERE, not in unitPrice.
+- unitPrice: only if a separate per-unit price (e.g. "$/kg") is also printed; otherwise null.
+- quantity: numeric count if printed; otherwise null.
+- unit: a measurement unit only (kg, g, ml, l, ea) if printed separately; otherwise null.
+  Do NOT put pack size here — pack size stays in rawName.
+- isDeal: true if the row shows a sale/multi-buy/loyalty price.
+
 Also capture the store name, date (ISO-8601 if legible), grand total, and currency if visible.
 Do not invent items or prices. If a value is illegible, use null.
+The sum of all totalPrice values should approximately equal the receipt total — re-check your
+row alignment if it does not.
 Respond with ONLY the JSON object, no prose or code fences.`;
 
 /** Sum of line totals vs printed total → confidence in [0,1]. 1 when we can't cross-check. */
