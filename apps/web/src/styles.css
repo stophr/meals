@@ -849,3 +849,18 @@ select.chip {
   border-radius: 10px;
   font-size: 0.9rem;
 }
+
+/* --- paste-parse rows --- */
+.parsed-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.parsed-row input:first-child {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}

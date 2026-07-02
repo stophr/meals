@@ -14,6 +14,8 @@ const envSchema = z.object({
   OCR_LOCAL_BASE_URL: z.string().default('http://localhost:11434/v1'),
   OCR_LOCAL_MODEL: z.string().default('qwen2.5vl:3b'),
   OCR_LOCAL_API_KEY: z.string().default(''),
+  // Text LLM for free-form price parsing (same local server; a text model, not the VLM).
+  LLM_MODEL: z.string().default('qwen2.5:7b'),
 
   // Claude provider (only used when OCR_PROVIDER=claude).
   ANTHROPIC_API_KEY: z.string().default(''),

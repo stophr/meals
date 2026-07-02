@@ -30,6 +30,7 @@ services:
       OCR_PROVIDER: ${OCR_PROVIDER:-local}
       OCR_LOCAL_BASE_URL: ${OCR_LOCAL_BASE_URL:-http://host.docker.internal:11434/v1}
       OCR_LOCAL_MODEL: ${OCR_LOCAL_MODEL:-qwen2.5vl:3b}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:7b}
       OCR_LOCAL_API_KEY: ${OCR_LOCAL_API_KEY:-}
       KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
       KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}

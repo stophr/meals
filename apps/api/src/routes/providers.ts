@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma, PriceSource } from '@meals/db';
-import { providerCreateSchema, providerUpdateSchema, quickPriceSchema } from '@meals/shared';
+import {
+  providerCreateSchema,
+  providerUpdateSchema,
+  quickPriceSchema,
+  bulkPricesSchema,
+} from '@meals/shared';
 import { parseIngredientLine, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
+import { recordProviderPrices } from '../lib/costcoPrices.js';
 
 export async function providerRoutes(app: FastifyInstance) {
   app.get('/providers', async () => {
@@ -63,5 +69,22 @@ export async function providerRoutes(app: FastifyInstance) {
       },
     });
     return { ok: true };
+  });
+
+  // Save parsed/edited price rows (from the free-form LLM paste) to this provider.
+  app.post('/providers/:id/bulk-prices', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { items } = bulkPricesSchema.parse(req.body);
+    const household = await getHousehold();
+    try {
+      const res = await recordProviderPrices(household.id, id, items, {
+        source: PriceSource.MANUAL,
+        upcPrefix: 'paste',
+      });
+      return res;
+    } catch (err) {
+      reply.code(400);
+      return { message: err instanceof Error ? err.message : String(err) };
+    }
   });
 }

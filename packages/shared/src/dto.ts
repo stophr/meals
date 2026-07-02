@@ -263,6 +263,21 @@ export const quickPriceSchema = z.object({
 });
 export type QuickPrice = z.infer<typeof quickPriceSchema>;
 
+/** Free-form paste → LLM parses into {name, size, price} rows. */
+export const parsePricesSchema = z.object({ text: z.string().min(1).max(20000) });
+export const parsedPriceSchema = z.object({
+  name: z.string().min(1),
+  price: z.number().positive(),
+  size: z.string().optional(),
+  itemNumber: z.string().optional(),
+});
+export type ParsedPrice = z.infer<typeof parsedPriceSchema>;
+
+/** Save parsed/edited price rows to a provider. */
+export const bulkPricesSchema = z.object({
+  items: z.array(parsedPriceSchema).min(1).max(500),
+});
+
 // ---- Settings ----
 export const settingsUpdateSchema = z.object({
   name: z.string().optional(),

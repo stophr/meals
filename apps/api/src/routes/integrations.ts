@@ -9,10 +9,13 @@ import {
   walmartCartLink,
   safewaySearchLinks,
 } from '@meals/ingestion';
-import { costcoImportSchema } from '@meals/shared';
+import { z } from 'zod';
+import { costcoImportSchema, parsePricesSchema, parsedPriceSchema } from '@meals/shared';
+import { chatJson } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices } from '../lib/kroger.js';
 import { recordCostcoPrices } from '../lib/costcoPrices.js';
+import { env } from '../env.js';
 
 // Short-lived state values for the OAuth redirect round-trip (CSRF protection).
 const pendingStates = new Map<string, number>();
@@ -228,6 +231,39 @@ export async function integrationRoutes(app: FastifyInstance) {
     } catch (err) {
       reply.code(400);
       return { message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Free-form paste → local LLM extracts {name, size, price} rows (preview only; saving is a
+  // separate confirmed step via POST /providers/:id/bulk-prices).
+  app.post('/integrations/parse-prices', async (req, reply) => {
+    const { text } = parsePricesSchema.parse(req.body);
+    try {
+      const raw = await chatJson({
+        baseUrl: env.OCR_LOCAL_BASE_URL,
+        model: env.LLM_MODEL,
+        apiKey: env.OCR_LOCAL_API_KEY || undefined,
+        system:
+          'You extract grocery products and their prices from pasted text (receipts, listings, ' +
+          'notes). Return JSON {"items":[{"name","size","price"}]}: name = the product (clean, ' +
+          'no price/size), size = pack/quantity text like "4 lb" or "2 L" if present else omit, ' +
+          'price = the number in dollars. Skip totals, tax, subtotals, and non-products. ' +
+          'Only include lines that clearly have a price.',
+        prompt: text,
+        maxTokens: 3000,
+        timeoutMs: 60000,
+      });
+      const obj = raw as { items?: unknown };
+      const items = z.array(parsedPriceSchema).parse(Array.isArray(raw) ? raw : (obj.items ?? []));
+      return { items };
+    } catch (err) {
+      reply.code(502);
+      return {
+        message:
+          err instanceof Error && /HTTP|fetch|ECONN|timeout/i.test(err.message)
+            ? 'Local LLM unreachable — is Ollama running and bound to 0.0.0.0? (see docs/local-ocr.md)'
+            : `Parse failed: ${err instanceof Error ? err.message : err}`,
+      };
     }
   });
 

@@ -8,6 +8,136 @@ interface SettingsData {
   timeValuePerMinute: number;
 }
 
+interface ProviderRow {
+  id: string;
+  name: string;
+}
+interface ParsedRow {
+  name: string;
+  price: number;
+  size?: string;
+}
+
+/** Paste any messy text → local LLM parses Name / size / price → confirm → save to a store. */
+function PasteParse() {
+  const [text, setText] = useState('');
+  const [rows, setRows] = useState<ParsedRow[]>();
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [providerId, setProviderId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>();
+
+  useEffect(() => {
+    api
+      .get<ProviderRow[]>('/providers')
+      .then((p) => {
+        setProviders(p);
+        setProviderId(p[0]?.id ?? '');
+      })
+      .catch(() => {});
+  }, []);
+
+  async function parse() {
+    setBusy(true);
+    setMsg(undefined);
+    setRows(undefined);
+    try {
+      const res = await api.post<{ items: ParsedRow[] }>('/integrations/parse-prices', { text });
+      setRows(res.items);
+      if (!res.items.length) setMsg('No priced items found in that text.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function edit(i: number, patch: Partial<ParsedRow>) {
+    setRows((rs) => rs?.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+  function drop(i: number) {
+    setRows((rs) => rs?.filter((_, j) => j !== i));
+  }
+
+  async function saveAll() {
+    if (!rows?.length || !providerId) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ recorded: number; linked: number }>(
+        `/providers/${providerId}/bulk-prices`,
+        { items: rows.filter((r) => r.name && r.price > 0) },
+      );
+      const store = providers.find((p) => p.id === providerId)?.name ?? 'store';
+      setMsg(`Saved ${res.recorded} price(s) to ${store} (${res.linked} auto-linked).`);
+      setRows(undefined);
+      setText('');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card add-card">
+      <div className="card-title">📋 Paste prices (AI parse)</div>
+      <p className="muted sheet-hint">
+        Paste a receipt, product list, or notes — the local AI pulls out name, size &amp; price.
+      </p>
+      <textarea
+        className="paste-box"
+        rows={4}
+        placeholder={'e.g.\nOrganic eggs 24ct  7.99\nKS olive oil 2L $18.99\nchicken thighs 4lb 9.47'}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <button className="btn btn-inline" disabled={busy || !text.trim()} onClick={parse}>
+        {busy && !rows ? 'Parsing…' : '✨ Parse'}
+      </button>
+
+      {rows && rows.length > 0 && (
+        <div className="parsed">
+          <div className="capture-row" style={{ margin: '10px 0' }}>
+            <span className="muted">Save to:</span>
+            <select className="chip" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {rows.map((r, i) => (
+            <div key={i} className="parsed-row">
+              <input value={r.name} onChange={(e) => edit(i, { name: e.target.value })} />
+              <input
+                className="size-input"
+                placeholder="size"
+                value={r.size ?? ''}
+                onChange={(e) => edit(i, { size: e.target.value })}
+              />
+              <input
+                className="price-input"
+                type="number"
+                inputMode="decimal"
+                value={r.price}
+                onChange={(e) => edit(i, { price: Number(e.target.value) })}
+              />
+              <button className="entry-x" onClick={() => drop(i)}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <button className="btn btn-inline" disabled={busy} onClick={saveAll}>
+            {busy ? 'Saving…' : `Save ${rows.length} to store`}
+          </button>
+        </div>
+      )}
+      {msg && <p className="notice">{msg}</p>}
+    </div>
+  );
+}
+
 /** Install the bookmarklet + paste Costco prices scraped by it. */
 function CostcoImport() {
   const linkRef = useRef<HTMLAnchorElement>(null);
@@ -129,6 +259,7 @@ export function Settings() {
       </button>
       {saved && <p className="notice">Saved.</p>}
 
+      <PasteParse />
       <CostcoImport />
     </section>
   );
