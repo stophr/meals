@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@meals/db';
-import { providerCreateSchema, providerUpdateSchema } from '@meals/shared';
+import { prisma, PriceSource } from '@meals/db';
+import { providerCreateSchema, providerUpdateSchema, quickPriceSchema } from '@meals/shared';
+import { parseIngredientLine, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 
 export async function providerRoutes(app: FastifyInstance) {
@@ -26,5 +27,41 @@ export async function providerRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     await prisma.provider.delete({ where: { id } });
     reply.code(204);
+  });
+
+  // Mobile quick price capture: record the price the user just saw at a store for one item.
+  // One "manual" product per item per provider; optional size enables proportional costing.
+  app.post('/providers/:id/quick-price', async (req) => {
+    const { id } = req.params as { id: string };
+    const { canonicalItemId, price, size } = quickPriceSchema.parse(req.body);
+    const item = await prisma.canonicalItem.findUniqueOrThrow({ where: { id: canonicalItemId } });
+    const parsed = size ? parseIngredientLine(size) : null;
+    const base =
+      parsed?.quantity && parsed.unit ? toBaseQuantity(parsed.quantity, parsed.unit) : null;
+
+    const upc = `manual:${canonicalItemId}`;
+    const product = await prisma.providerProduct.upsert({
+      where: { providerId_upc: { providerId: id, upc } },
+      create: {
+        providerId: id,
+        canonicalItemId,
+        rawName: item.name,
+        sizeText: size,
+        baseQuantity: base ? base.baseQuantity.toString() : undefined,
+        upc,
+      },
+      update: { sizeText: size, baseQuantity: base ? base.baseQuantity.toString() : undefined },
+    });
+    await prisma.priceObservation.create({
+      data: {
+        providerProductId: product.id,
+        price: price.toFixed(2),
+        pricePerBaseUnit:
+          base && base.baseQuantity > 0 ? (price / base.baseQuantity).toFixed(6) : undefined,
+        source: PriceSource.MANUAL,
+        validTo: new Date(Date.now() + 60 * 86_400_000),
+      },
+    });
+    return { ok: true };
   });
 }

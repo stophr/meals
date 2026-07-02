@@ -13,11 +13,102 @@ interface ListRow {
 interface ListDetail extends ListRow {
   items: {
     id: string;
+    canonicalItemId: string;
     quantityNeeded: string;
     unit: string;
     estimatedPrice?: string | null;
     canonicalItem: { name: string };
   }[];
+}
+
+interface ProviderRow {
+  id: string;
+  name: string;
+}
+
+// Per-item store search deep links — open the item on the store's own site/app on mobile.
+const STORE_LINKS: { label: string; url: (q: string) => string }[] = [
+  { label: '🏬 Costco', url: (q) => `https://www.costco.com/CatalogSearch?keyword=${encodeURIComponent(q)}` },
+  { label: '🔴 Fry’s', url: (q) => `https://www.frysfood.com/search?query=${encodeURIComponent(q)}` },
+  { label: '🛒 Walmart', url: (q) => `https://www.walmart.com/search?q=${encodeURIComponent(q)}` },
+];
+
+/** Tap a store to open the item there; type the price you see; it's saved for that store. */
+function PriceCapture({
+  item,
+  providers,
+  onSaved,
+}: {
+  item: ListDetail['items'][number];
+  providers: ProviderRow[];
+  onSaved: (msg: string) => void;
+}) {
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
+  const [price, setPrice] = useState('');
+  const [size, setSize] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!providerId || !price) return;
+    setBusy(true);
+    try {
+      await api.post(`/providers/${providerId}/quick-price`, {
+        canonicalItemId: item.canonicalItemId,
+        price: Number(price),
+        size: size.trim() || undefined,
+      });
+      const store = providers.find((p) => p.id === providerId)?.name ?? 'store';
+      onSaved(`Saved $${Number(price).toFixed(2)} for ${item.canonicalItem.name} at ${store}.`);
+      setPrice('');
+      setSize('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="price-capture">
+      <div className="store-links">
+        {STORE_LINKS.map((s) => (
+          <a
+            key={s.label}
+            className="store-link"
+            href={s.url(item.canonicalItem.name)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {s.label}
+          </a>
+        ))}
+      </div>
+      <div className="capture-row">
+        <select className="chip" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="price-input"
+          type="number"
+          inputMode="decimal"
+          placeholder="$ price"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+        />
+        <input
+          className="size-input"
+          placeholder="size?"
+          value={size}
+          onChange={(e) => setSize(e.target.value)}
+        />
+        <button className="btn btn-inline" disabled={busy || !price} onClick={save}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface Coupon {
@@ -92,10 +183,13 @@ function CouponsPanel() {
 
 export function Shopping() {
   const { data: lists, error, loading } = useApi<ListRow[]>(() => api.get('/shopping-lists'), []);
+  const { data: providers } = useApi<ProviderRow[]>(() => api.get('/providers'), []);
   const [selected, setSelected] = useState<string>();
   const [detail, setDetail] = useState<ListDetail>();
   const [result, setResult] = useState<OptimizationResult>();
   const [busy, setBusy] = useState(false);
+  const [capturing, setCapturing] = useState<string>();
+  const [priceMsg, setPriceMsg] = useState<string>();
 
   async function open(id: string) {
     setSelected(id);
@@ -186,14 +280,28 @@ export function Shopping() {
             </div>
           )}
 
+          {priceMsg && <p className="notice">{priceMsg}</p>}
           <ul className="card-list">
             {detail.items.map((it) => (
               <li key={it.id} className="card">
-                <div className="card-title">{it.canonicalItem.name}</div>
-                <div className="card-sub">
-                  {Number(it.quantityNeeded).toFixed(0)} {it.unit.toLowerCase()}
-                  {it.estimatedPrice ? ` · ~$${Number(it.estimatedPrice).toFixed(2)}` : ''}
+                <div className="page-head">
+                  <div>
+                    <div className="card-title">{it.canonicalItem.name}</div>
+                    <div className="card-sub">
+                      {Number(it.quantityNeeded).toFixed(0)} {it.unit.toLowerCase()}
+                      {it.estimatedPrice ? ` · ~$${Number(it.estimatedPrice).toFixed(2)}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-link"
+                    onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
+                  >
+                    {capturing === it.id ? 'close' : '💲 check price'}
+                  </button>
                 </div>
+                {capturing === it.id && (
+                  <PriceCapture item={it} providers={providers ?? []} onSaved={setPriceMsg} />
+                )}
               </li>
             ))}
           </ul>

@@ -809,3 +809,43 @@ select.chip {
   margin: 8px 0;
   resize: vertical;
 }
+
+/* --- mobile price capture --- */
+.price-capture {
+  margin-top: 8px;
+}
+.store-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.store-link {
+  background: var(--green-light);
+  color: var(--green);
+  border-radius: 999px;
+  padding: 8px 14px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.capture-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.price-input {
+  width: 90px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1rem;
+}
+.size-input {
+  width: 70px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.9rem;
+}

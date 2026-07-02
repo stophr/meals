@@ -255,6 +255,14 @@ export const costcoImportSchema = z.object({
 });
 export type CostcoImport = z.infer<typeof costcoImportSchema>;
 
+/** Mobile quick price capture: type the price you see at a store for one item. */
+export const quickPriceSchema = z.object({
+  canonicalItemId: cuid,
+  price: z.number().positive(),
+  size: z.string().optional(), // e.g. "4 lb", "2 L" — enables proportional costing
+});
+export type QuickPrice = z.infer<typeof quickPriceSchema>;
+
 // ---- Settings ----
 export const settingsUpdateSchema = z.object({
   name: z.string().optional(),
