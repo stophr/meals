@@ -26,12 +26,18 @@ interface ProviderRow {
   name: string;
 }
 
-// Per-item store search deep links — open the item on the store's own site/app on mobile.
-const STORE_LINKS: { label: string; url: (q: string) => string }[] = [
-  { label: '🏬 Costco', url: (q) => `https://www.costco.com/CatalogSearch?keyword=${encodeURIComponent(q)}` },
-  { label: '🔴 Fry’s', url: (q) => `https://www.frysfood.com/search?query=${encodeURIComponent(q)}` },
-  { label: '🛒 Walmart', url: (q) => `https://www.walmart.com/search?q=${encodeURIComponent(q)}` },
+// Map a provider (by name) to its store search URL + icon, so the link chips and the save
+// dropdown are always the same set of stores.
+const STORE_TEMPLATES: { match: RegExp; icon: string; url: (q: string) => string }[] = [
+  { match: /costco/i, icon: '🏬', url: (q) => `https://www.costco.com/CatalogSearch?keyword=${encodeURIComponent(q)}` },
+  { match: /fry/i, icon: '🔴', url: (q) => `https://www.frysfood.com/search?query=${encodeURIComponent(q)}` },
+  { match: /walmart/i, icon: '🛒', url: (q) => `https://www.walmart.com/search?q=${encodeURIComponent(q)}` },
+  { match: /safeway/i, icon: '🔵', url: (q) => `https://www.safeway.com/shop/search-results.html?q=${encodeURIComponent(q)}` },
 ];
+
+function storeTemplate(name: string) {
+  return STORE_TEMPLATES.find((t) => t.match.test(name));
+}
 
 /** Tap a store to open the item there; type the price you see; it's saved for that store. */
 function PriceCapture({
@@ -69,17 +75,23 @@ function PriceCapture({
   return (
     <div className="price-capture">
       <div className="store-links">
-        {STORE_LINKS.map((s) => (
-          <a
-            key={s.label}
-            className="store-link"
-            href={s.url(item.canonicalItem.name)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {s.label}
-          </a>
-        ))}
+        {providers.map((p) => {
+          const t = storeTemplate(p.name);
+          if (!t) return null;
+          // Tapping a store opens it AND selects it for the price you're about to save.
+          return (
+            <a
+              key={p.id}
+              className="store-link"
+              href={t.url(item.canonicalItem.name)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setProviderId(p.id)}
+            >
+              {t.icon} {p.name.replace(/\s*\(.*\)$/, '')}
+            </a>
+          );
+        })}
       </div>
       <div className="capture-row">
         <select className="chip" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
