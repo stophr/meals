@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -92,7 +92,8 @@ function MealTile({
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: entry.id,
-    disabled: entry.locked,
+    // tmp- ids are optimistic placeholders awaiting the server round-trip.
+    disabled: entry.locked || entry.id.startsWith('tmp-'),
   });
   return (
     <div
@@ -280,10 +281,33 @@ export function Plan() {
   const refresh = () => setNonce((n) => n + 1);
   const lockedKeys = useMemo(() => new Set(queue?.lockedDayKeys ?? []), [queue]);
 
+  // Optimistic drops: show the result immediately; server truth replaces it on refetch.
+  const [pending, setPending] = useState<{
+    copies: QueueEntry[];
+    moves: Record<string, string | null>;
+  }>({ copies: [], moves: {} });
+  useEffect(() => {
+    setPending({ copies: [], moves: {} });
+  }, [queue]);
+
+  const effectiveUpcoming = useMemo(() => {
+    const base = (queue?.upcoming ?? []).map((e) =>
+      pending.moves[e.id] !== undefined ? { ...e, date: pending.moves[e.id]! } : e,
+    );
+    return [...base.filter((e) => e.date != null), ...pending.copies];
+  }, [queue, pending]);
+  const shelfEntries = useMemo(
+    () => [
+      ...(queue?.unassigned ?? []),
+      ...(queue?.upcoming ?? []).filter((e) => pending.moves[e.id] === null),
+    ],
+    [queue, pending],
+  );
+
   // Templates (unassigned) are slot-agnostic; the board shows only the active slot.
   const slotEntries = useMemo(
-    () => (queue?.upcoming ?? []).filter((e) => e.slot === slot),
-    [queue, slot],
+    () => effectiveUpcoming.filter((e) => e.slot === slot),
+    [effectiveUpcoming, slot],
   );
   const byDay = useMemo(() => {
     const m = new Map<string, QueueEntry[]>();
@@ -325,16 +349,25 @@ export function Plan() {
     const over = ev.over?.id;
     if (!entry || over == null) return;
 
-    await run(async () => {
+    setMsg(undefined);
+    try {
       if (over === 'unassigned') {
         // Scheduled tile dragged back to the shelf -> becomes a template.
         if (!entry.date) return;
+        setPending((p) => ({ ...p, moves: { ...p.moves, [entry.id]: null } }));
         await api.patch(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}`, { date: null });
       } else {
         const k = String(over).replace(/^day:/, '');
         const date = `${k}T12:00:00.000Z`;
         if (!entry.date) {
           // Template dropped on a day -> COPY: create a new entry, template stays.
+          setPending((p) => ({
+            ...p,
+            copies: [
+              ...p.copies,
+              { ...entry, id: `tmp-${Date.now()}`, date, slot, locked: false },
+            ],
+          }));
           await api.post(`/meal-plans/${entry.mealPlanId}/entries`, {
             recipeId: entry.recipe.id,
             date,
@@ -343,11 +376,15 @@ export function Plan() {
           });
         } else {
           if (keyOf(entry.date) === k) return;
+          setPending((p) => ({ ...p, moves: { ...p.moves, [entry.id]: date } }));
           await api.patch(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}`, { date });
         }
       }
       refresh();
-    });
+    } catch (e) {
+      setPending({ copies: [], moves: {} }); // roll back the optimistic drop
+      setMsg(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function remove(e: QueueEntry) {
@@ -474,9 +511,16 @@ export function Plan() {
         </div>
       )}
 
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <UnassignedShelf empty={(queue?.unassigned ?? []).length === 0}>
-          {(queue?.unassigned ?? []).map((e) => renderTile(e, true))}
+      <DndContext
+        sensors={sensors}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        // Don't scroll-refocus the source tile after a drop — with copy semantics the
+        // template stays on the shelf and the refocus yanked the page back up to it.
+        accessibility={{ restoreFocus: false }}
+      >
+        <UnassignedShelf empty={shelfEntries.length === 0}>
+          {shelfEntries.map((e) => renderTile(e, true))}
         </UnassignedShelf>
 
         {earlier.length > 0 && (
@@ -507,7 +551,11 @@ export function Plan() {
           </>
         )}
 
-        <DragOverlay>{dragging ? <TileGhost entry={dragging} /> : null}</DragOverlay>
+        {/* dropAnimation null: the default animates the ghost flying back to its source,
+            which reads as the tile "snapping back" to the template shelf. */}
+        <DragOverlay dropAnimation={null}>
+          {dragging ? <TileGhost entry={dragging} /> : null}
+        </DragOverlay>
       </DndContext>
 
       {servingsEntry && (
