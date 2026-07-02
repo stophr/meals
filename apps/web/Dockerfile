@@ -11,8 +11,9 @@ RUN pnpm install --frozen-lockfile || pnpm install
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
 
-# API base URL is baked in at build time; override with --build-arg.
-ARG VITE_API_BASE_URL=http://localhost:3001
+# API base URL baked at build time. "/api" = same-origin via the nginx proxy,
+# which works from any device (phone on LAN). Override with --build-arg for split hosting.
+ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN pnpm --filter @meals/web build
 
