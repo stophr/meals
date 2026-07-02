@@ -11,6 +11,7 @@ import { getHousehold } from '../lib/household.js';
 import { buildOptimizerInput } from '../lib/optimizerInput.js';
 import { buildShoppingList } from '../lib/shoppingBuild.js';
 import { noonToday } from '../lib/queue.js';
+import { computeItemOptions, pickBest } from '../lib/shoppingOptions.js';
 
 function dayLabel(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -123,6 +124,92 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     const { itemId } = req.params as { itemId: string };
     const data = shoppingListItemUpdateSchema.parse(req.body);
     return prisma.shoppingListItem.update({ where: { id: itemId }, data });
+  });
+
+  // Per-item provider options (every store × size with a current price).
+  app.get('/shopping-lists/:id/options', async (req) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold();
+    return { items: await computeItemOptions(household.id, id) };
+  });
+
+  // Flip every item to its best option by unit price or total cost, and persist.
+  app.post('/shopping-lists/:id/auto-select', async (req) => {
+    const { id } = req.params as { id: string };
+    const mode = ((req.body as { mode?: string } | null)?.mode === 'unit' ? 'unit' : 'total') as
+      | 'unit'
+      | 'total';
+    const household = await getHousehold();
+    const items = await computeItemOptions(household.id, id);
+    const picks = pickBest(items, mode);
+    await prisma.$transaction(
+      picks.map((p) =>
+        prisma.shoppingListItem.update({
+          where: { id: p.itemId },
+          data: {
+            assignedProviderId: p.option.providerId,
+            chosenProductId: p.option.productId,
+            estimatedPrice: p.option.totalCost.toFixed(2),
+          },
+        }),
+      ),
+    );
+    return { mode, selected: picks.length, unpriced: items.length - picks.length };
+  });
+
+  // Split the list per store, with totals and whether each store supports cart fill.
+  app.post('/shopping-lists/:id/build', async (req) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold();
+    const items = await computeItemOptions(household.id, id);
+    const providers = await prisma.provider.findMany({ where: { householdId: household.id } });
+    const krogerToken = await prisma.integrationToken.findUnique({
+      where: { householdId_kind: { householdId: household.id, kind: 'kroger' } },
+    });
+
+    const groups = new Map<
+      string,
+      { providerId: string; name: string; canFillCart: boolean; total: number; items: unknown[] }
+    >();
+    const unpriced: string[] = [];
+
+    for (const item of items) {
+      // Use the chosen option; fall back to cheapest total if nothing chosen yet.
+      const chosen =
+        item.options.find((o) => o.productId === item.chosenProductId) ?? item.options[0];
+      if (!chosen) {
+        unpriced.push(item.name);
+        continue;
+      }
+      const provider = providers.find((p) => p.id === chosen.providerId);
+      const integ = provider?.integration as { type?: string } | null;
+      let g = groups.get(chosen.providerId);
+      if (!g) {
+        g = {
+          providerId: chosen.providerId,
+          name: chosen.providerName,
+          canFillCart: integ?.type === 'kroger' && !!krogerToken,
+          total: 0,
+          items: [],
+        };
+        groups.set(chosen.providerId, g);
+      }
+      g.total = Math.round((g.total + chosen.totalCost) * 100) / 100;
+      g.items.push({
+        name: item.name,
+        brand: chosen.brand,
+        size: chosen.size,
+        packsNeeded: chosen.packsNeeded,
+        totalCost: chosen.totalCost,
+      });
+    }
+
+    const stores = [...groups.values()].sort((a, b) => b.total - a.total);
+    return {
+      stores,
+      grandTotal: Math.round(stores.reduce((s, g) => s + g.total, 0) * 100) / 100,
+      unpriced,
+    };
   });
 
   app.delete('/shopping-lists/:id', async (req, reply) => {

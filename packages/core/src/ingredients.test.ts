@@ -63,3 +63,12 @@ describe('complexityOf', () => {
     expect(complexityOf(5, 90)).toBe('HARD');
   });
 });
+
+describe('bare size strings', () => {
+  it('parses sizes with the unit at end of string', () => {
+    expect(parseIngredientLine('4 lb')).toMatchObject({ quantity: 4, unit: 'LB' });
+    expect(parseIngredientLine('16 fl oz')).toMatchObject({ quantity: 16, unit: 'FLOZ' });
+    expect(parseIngredientLine('2 L')).toMatchObject({ quantity: 2, unit: 'L' });
+    expect(parseIngredientLine('10oz')).toMatchObject({ quantity: 10, unit: 'OZ' });
+  });
+});

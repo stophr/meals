@@ -864,3 +864,32 @@ select.chip {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+/* --- store comparison / build --- */
+.chosen {
+  font-size: 0.9rem;
+  margin: 6px 0;
+}
+.option-select {
+  margin-top: 6px;
+  max-width: 100%;
+}
+.build {
+  margin: 12px 0;
+}
+.build-store {
+  margin-bottom: 10px;
+}
+.build-items {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  font-size: 0.85rem;
+}
+.build-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}

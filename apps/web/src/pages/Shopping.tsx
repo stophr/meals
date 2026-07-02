@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import type { OptimizationResult } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
 
@@ -24,6 +23,52 @@ interface ListDetail extends ListRow {
 interface ProviderRow {
   id: string;
   name: string;
+}
+
+interface ItemOption {
+  providerId: string;
+  providerName: string;
+  productId: string;
+  brand: string | null;
+  size: string | null;
+  price: number;
+  unitPrice: number | null;
+  packsNeeded: number;
+  totalCost: number;
+}
+interface ItemWithOptions {
+  itemId: string;
+  name: string;
+  neededBase: number;
+  unit: string;
+  chosenProductId: string | null;
+  options: ItemOption[];
+}
+interface BuildStore {
+  providerId: string;
+  name: string;
+  canFillCart: boolean;
+  total: number;
+  items: { name: string; brand: string | null; size: string | null; totalCost: number }[];
+}
+interface BuildResult {
+  stores: BuildStore[];
+  grandTotal: number;
+  unpriced: string[];
+}
+
+function baseUnitLabel(unit: string): string {
+  // Items normalize to g / ml / each; show a friendly per-unit label.
+  const u = unit.toUpperCase();
+  if (['G', 'KG', 'MG', 'OZ', 'LB'].includes(u)) return '/100g';
+  if (['ML', 'L', 'FLOZ', 'CUP', 'TBSP', 'TSP'].includes(u)) return '/100ml';
+  return '/ea';
+}
+function unitPriceLabel(o: ItemOption, unit: string): string {
+  if (o.unitPrice == null) return '';
+  const per100 = ['/100g', '/100ml'].includes(baseUnitLabel(unit));
+  const v = per100 ? o.unitPrice * 100 : o.unitPrice;
+  return ` ($${v.toFixed(2)}${baseUnitLabel(unit)})`;
 }
 
 // Map a provider (by name) to its store search URL + icon, so the link chips and the save
@@ -244,22 +289,74 @@ export function Shopping() {
   const { data: providers } = useApi<ProviderRow[]>(() => api.get('/providers'), []);
   const [selected, setSelected] = useState<string>();
   const [detail, setDetail] = useState<ListDetail>();
-  const [result, setResult] = useState<OptimizationResult>();
+  const [options, setOptions] = useState<ItemWithOptions[]>();
+  const [build, setBuild] = useState<BuildResult>();
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState<string>();
   const [priceMsg, setPriceMsg] = useState<string>();
 
+  async function loadOptions(id: string) {
+    const res = await api.get<{ items: ItemWithOptions[] }>(`/shopping-lists/${id}/options`);
+    setOptions(res.items);
+  }
   async function open(id: string) {
     setSelected(id);
-    setResult(undefined);
+    setBuild(undefined);
     setDetail(await api.get<ListDetail>(`/shopping-lists/${id}`));
+    await loadOptions(id);
   }
 
-  async function optimize() {
+  async function autoSelect(mode: 'unit' | 'total') {
     if (!selected) return;
     setBusy(true);
     try {
-      setResult(await api.post<OptimizationResult>(`/shopping-lists/${selected}/optimize`));
+      const r = await api.post<{ selected: number; unpriced: number }>(
+        `/shopping-lists/${selected}/auto-select`,
+        { mode },
+      );
+      setPriceMsg(
+        `Picked best ${mode === 'unit' ? 'unit price' : 'total'} for ${r.selected} item(s)` +
+          (r.unpriced ? `, ${r.unpriced} still unpriced.` : '.'),
+      );
+      await loadOptions(selected);
+      setBuild(undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function chooseOption(itemId: string, o: ItemOption) {
+    if (!selected) return;
+    await api.patch(`/shopping-lists/${selected}/items/${itemId}`, {
+      assignedProviderId: o.providerId,
+      chosenProductId: o.productId,
+    });
+    await loadOptions(selected);
+    setBuild(undefined);
+  }
+
+  async function buildLists() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      setBuild(await api.post<BuildResult>(`/shopping-lists/${selected}/build`));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fillCart(store: BuildStore) {
+    if (!selected) return;
+    setBusy(true);
+    setPriceMsg(undefined);
+    try {
+      const r = await api.post<{ pushed?: number; message?: string }>(
+        `/shopping-lists/${selected}/kroger-cart`,
+        { providerId: store.providerId },
+      );
+      setPriceMsg(r.message ?? `Added ${r.pushed} item(s) to your ${store.name} cart.`);
+    } catch (e) {
+      setPriceMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -310,58 +407,123 @@ export function Shopping() {
             ← All lists
           </button>
           <h3>{detail.name ?? 'Shopping list'}</h3>
-          <button className="btn" disabled={busy} onClick={optimize}>
-            {busy ? 'Optimizing…' : 'Optimize (time vs savings)'}
-          </button>
 
-          {result && (
-            <div className="options">
-              {result.options.map((o, i) => (
-                <div key={o.strategy} className={`option ${i === result.recommendedIndex ? 'recommended' : ''}`}>
-                  <div className="option-head">
-                    <strong>{o.strategy}</strong>
-                    {i === result.recommendedIndex && <span className="badge">recommended</span>}
+          <div className="chips">
+            <button className="chip" disabled={busy} onClick={() => autoSelect('total')}>
+              💵 Best total
+            </button>
+            <button className="chip" disabled={busy} onClick={() => autoSelect('unit')}>
+              ⚖️ Best unit price
+            </button>
+            <button className="chip active" disabled={busy} onClick={buildLists}>
+              🧾 Build lists
+            </button>
+          </div>
+          {priceMsg && <p className="notice">{priceMsg}</p>}
+
+          {build && (
+            <div className="build">
+              <div className="card-title">Lists by store — total ${build.grandTotal.toFixed(2)}</div>
+              {build.stores.map((s) => (
+                <div key={s.providerId} className="card build-store">
+                  <div className="page-head">
+                    <strong>{s.name}</strong>
+                    <span>${s.total.toFixed(2)}</span>
                   </div>
-                  <div className="option-stats">
-                    ${o.totalMoney.toFixed(2)} · {o.totalTimeMinutes} min ·{' '}
-                    {o.storeSubtotals.length} store(s) · saves ${o.savingsVsBaseline.toFixed(2)}
-                  </div>
-                  <ul className="store-list">
-                    {o.storeSubtotals.map((s) => (
-                      <li key={s.providerId}>
-                        {s.name}: ${s.itemCost.toFixed(2)} ({s.travelMinutes} min)
+                  <ul className="build-items">
+                    {s.items.map((it, i) => (
+                      <li key={i}>
+                        <span>
+                          {it.name}
+                          {it.brand ? ` · ${it.brand}` : ''}
+                          {it.size ? ` · ${it.size}` : ''}
+                        </span>
+                        <span>${it.totalCost.toFixed(2)}</span>
                       </li>
                     ))}
                   </ul>
+                  {s.canFillCart ? (
+                    <button className="btn" disabled={busy} onClick={() => fillCart(s)}>
+                      🛒 Fill {s.name} cart
+                    </button>
+                  ) : (
+                    <p className="muted sheet-hint">Manual list (no cart integration for this store).</p>
+                  )}
                 </div>
               ))}
+              {build.unpriced.length > 0 && (
+                <p className="muted sheet-hint">
+                  No price yet: {build.unpriced.join(', ')} — use 💲 check price below.
+                </p>
+              )}
             </div>
           )}
 
-          {priceMsg && <p className="notice">{priceMsg}</p>}
           <ul className="card-list">
-            {detail.items.map((it) => (
-              <li key={it.id} className="card">
-                <div className="page-head">
-                  <div>
-                    <div className="card-title">{it.canonicalItem.name}</div>
-                    <div className="card-sub">
-                      {Number(it.quantityNeeded).toFixed(0)} {it.unit.toLowerCase()}
-                      {it.estimatedPrice ? ` · ~$${Number(it.estimatedPrice).toFixed(2)}` : ''}
+            {detail.items.map((it) => {
+              const opt = options?.find((o) => o.itemId === it.id);
+              const chosen =
+                opt?.options.find((o) => o.productId === opt.chosenProductId) ?? opt?.options[0];
+              return (
+                <li key={it.id} className="card">
+                  <div className="page-head">
+                    <div>
+                      <div className="card-title">{it.canonicalItem.name}</div>
+                      <div className="card-sub">
+                        {Number(it.quantityNeeded).toFixed(0)} {it.unit.toLowerCase()}
+                      </div>
                     </div>
+                    <button
+                      className="btn-link"
+                      onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
+                    >
+                      {capturing === it.id ? 'close' : '💲 check price'}
+                    </button>
                   </div>
-                  <button
-                    className="btn-link"
-                    onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
-                  >
-                    {capturing === it.id ? 'close' : '💲 check price'}
-                  </button>
-                </div>
-                {capturing === it.id && (
-                  <PriceCapture item={it} providers={providers ?? []} onSaved={setPriceMsg} />
-                )}
-              </li>
-            ))}
+
+                  {chosen ? (
+                    <div className="chosen">
+                      <span className="badge badge-ok">{chosen.providerName}</span>{' '}
+                      {chosen.brand ? `${chosen.brand} · ` : ''}
+                      {chosen.size ? `${chosen.size} · ` : ''}
+                      <strong>${chosen.totalCost.toFixed(2)}</strong>
+                      <span className="muted">{unitPriceLabel(chosen, it.unit)}</span>
+                    </div>
+                  ) : (
+                    <div className="card-sub muted">No price yet — 💲 check price</div>
+                  )}
+
+                  {opt && opt.options.length > 1 && (
+                    <select
+                      className="chip option-select"
+                      value={chosen?.productId ?? ''}
+                      onChange={(e) => {
+                        const o = opt.options.find((x) => x.productId === e.target.value);
+                        if (o) chooseOption(it.id, o);
+                      }}
+                    >
+                      {opt.options.map((o) => (
+                        <option key={o.productId} value={o.productId}>
+                          {o.providerName} · {o.brand ?? ''} {o.size ?? ''} · ${o.totalCost.toFixed(2)}
+                          {unitPriceLabel(o, it.unit)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {capturing === it.id && (
+                    <PriceCapture
+                      item={it}
+                      providers={providers ?? []}
+                      onSaved={(m) => {
+                        setPriceMsg(m);
+                        loadOptions(selected!);
+                      }}
+                    />
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

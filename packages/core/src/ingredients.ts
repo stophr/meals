@@ -85,7 +85,9 @@ export function parseIngredientLine(raw: string): ParsedIngredient {
   }
 
   let unit: Unit | null = null;
-  const unitMatch = text.match(/^(fl\s?oz|[a-zA-Z]+)\.?\s+/);
+  // Match the unit whether a name follows ("4 lb flour") or not — bare sizes like "4 lb",
+  // "16 fl oz", "2 L" end right after the unit.
+  const unitMatch = text.match(/^(fl\s?oz|[a-zA-Z]+)\.?(\s+|$)/);
   if (unitMatch) {
     const key = unitMatch[1]!.toLowerCase().replace(/\s/g, '');
     const mapped = key === 'floz' ? 'FLOZ' : UNIT_ALIASES[key];
