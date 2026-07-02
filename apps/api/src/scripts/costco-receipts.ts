@@ -17,7 +17,6 @@ import { prisma, PriceSource } from '@meals/db';
 import { matchLine, normalizeName } from '@meals/core';
 
 const HOST = 'https://www.costco.com';
-const STATE_PATH = 'storage/costco-web-state.json';
 
 interface ReceiptLine {
   itemNumber: string;
@@ -26,31 +25,45 @@ interface ReceiptLine {
   date: Date;
 }
 
+const PROFILE_DIR = 'storage/costco-chrome-profile';
+
+// Costco's Akamai denies bundled/headless Chromium outright (verified 403). Best shot is the
+// REAL system Chrome, a persistent on-disk profile, and no automation flags — headed. Even
+// so it may be blocked; if the window shows "Access Denied", use receipt-photo OCR instead
+// (Costco receipts OCR cleanly). Uses a persistent context (its own storage) rather than
+// storageState.
 async function openContext(headed = false): Promise<{ ctx: BrowserContext; page: Page }> {
-  const browser = await chromium.launch({ headless: !headed });
-  const ctx = await browser.newContext({
-    ...(existsSync(STATE_PATH) ? { storageState: STATE_PATH } : {}),
+  mkdirSync(PROFILE_DIR, { recursive: true });
+  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+    headless: !headed,
+    channel: 'chrome',
+    ignoreDefaultArgs: ['--enable-automation'],
+    args: ['--disable-blink-features=AutomationControlled'],
     viewport: { width: 1280, height: 900 },
   });
-  return { ctx, page: await ctx.newPage() };
+  return { ctx, page: ctx.pages()[0] ?? (await ctx.newPage()) };
 }
 
 async function login() {
-  mkdirSync('storage', { recursive: true });
   const { ctx, page } = await openContext(true);
-  console.log(`Opening ${HOST} sign-in …`);
-  await page.goto(`${HOST}/logon`, { waitUntil: 'domcontentloaded' });
+  console.log(`Opening ${HOST} …`);
+  try {
+    await page.goto(`${HOST}/`, { waitUntil: 'domcontentloaded' });
+  } catch {
+    /* keep the window open regardless */
+  }
   console.log('');
-  console.log('  1. Sign in with your Costco membership account');
-  console.log('  2. When fully signed in, come back HERE and press Enter (leave the browser open)');
+  console.log('  1. If you see "Access Denied", Costco blocked automation — close and use');
+  console.log('     receipt-photo OCR instead (Pantry/receipt upload). Otherwise:');
+  console.log('  2. Sign in, open Orders & Purchases once, then press Enter here.');
+  console.log('     The session persists in the Chrome profile for the fetch step.');
   console.log('');
   await new Promise<void>((resolve) => {
     process.stdin.resume();
     process.stdin.once('data', () => resolve());
   });
-  await ctx.storageState({ path: STATE_PATH });
-  console.log(`Session saved to ${STATE_PATH}.`);
-  await ctx.browser()?.close();
+  await ctx.close();
+  console.log(`Profile saved (${PROFILE_DIR}).`);
   process.stdin.pause();
 }
 
@@ -108,18 +121,18 @@ const RECEIPT_QUERIES: { name: string; run: (page: Page, months: number) => Prom
 ];
 
 async function fetchReceipts() {
-  if (!existsSync(STATE_PATH)) throw new Error('No session — run with --login first');
+  if (!existsSync(PROFILE_DIR)) throw new Error('No session — run with --login first');
   const months = Number(
     process.argv.includes('--months') ? process.argv[process.argv.indexOf('--months') + 1] : 3,
   );
-  const headed = process.argv.includes('--headed');
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
   const costco = await prisma.provider.findFirst({
     where: { householdId: household.id, name: { startsWith: 'Costco' } },
   });
   if (!costco) throw new Error('No Costco provider — create one first');
 
-  const { ctx, page } = await openContext(headed);
+  // Headless is 403'd by Costco; fetch runs headed too (leave the window alone while it works).
+  const { ctx, page } = await openContext(true);
   await page.goto(`${HOST}/OrderStatusCmd`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(5000); // let the SPA establish its API auth
 
@@ -136,7 +149,7 @@ async function fetchReceipts() {
       /* try next */
     }
   }
-  await ctx.browser()?.close();
+  await ctx.close();
   if (!lines.length) {
     throw new Error(
       'No receipt lines retrieved. Either no warehouse purchases in the window, the session ' +

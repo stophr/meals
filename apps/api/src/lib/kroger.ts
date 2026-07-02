@@ -101,8 +101,11 @@ export async function syncPrices(
         result.unmatched.push(item.name);
         continue;
       }
-      // Timeout / 5xx: retry once after a breather, then count toward the abort.
-      await sleep(1500);
+      // Timeout / 5xx (incl. Kroger's transient "ring-balancer" 503s): back off and retry.
+      // Bulk runs must ride out gateway brownouts, so escalate the wait and only give up
+      // after a long unbroken failure streak.
+      consecutiveFailures++;
+      await sleep(Math.min(2000 * consecutiveFailures, 20000));
       try {
         products = await searchProducts(cfg, token, {
           term: item.name,
@@ -112,14 +115,13 @@ export async function syncPrices(
         });
         consecutiveFailures = 0;
       } catch (err2) {
-        consecutiveFailures++;
         result.unmatched.push(item.name);
-        if (consecutiveFailures >= 5) {
+        if (consecutiveFailures >= 12) {
           throw new Error(
-            'Kroger Products API is not responding. If this app uses the Certification ' +
-              'environment (api-ce), note that cert has NO live product catalog (504s) — register ' +
-              'a Production app and set KROGER_API_BASE=https://api.kroger.com/v1. ' +
-              `Last error: ${err2 instanceof Error ? err2.message : err2}`,
+            'Kroger Products API failed for 12 items straight. If this app uses the ' +
+              'Certification environment (api-ce), note cert has NO product catalog (504s) — ' +
+              'use a Production app + KROGER_API_BASE=https://api.kroger.com/v1. Otherwise it is ' +
+              `a Kroger outage; re-run later (sync is idempotent). Last: ${err2 instanceof Error ? err2.message : err2}`,
           );
         }
         continue;
