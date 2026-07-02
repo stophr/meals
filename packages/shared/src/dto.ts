@@ -171,6 +171,11 @@ export const assignEntrySchema = z.object({
   dates: z.array(z.coerce.date()).min(1).max(31),
 });
 
+/** Move an entry (drag & drop): a new date, or null back to unassigned. */
+export const moveEntrySchema = z.object({
+  date: z.coerce.date().nullable(),
+});
+
 // ---- Recurring meals ----
 export const repeatKinds = ['RANDOM_WEEKLY', 'RANDOM_MONTHLY', 'DAILY', 'WEEKLY', 'MONTHLY'] as const;
 export const mealRuleCreateSchema = z

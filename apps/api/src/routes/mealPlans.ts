@@ -7,6 +7,7 @@ import {
   generateMealPlanSchema,
   stageRecipeSchema,
   assignEntrySchema,
+  moveEntrySchema,
   mealRuleCreateSchema,
 } from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
@@ -213,6 +214,30 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       })),
     });
     return { applied: fresh.length, skippedExisting: wanted.length - fresh.length };
+  });
+
+  // Drag & drop: move an entry to another day, or back to unassigned (date null).
+  app.patch('/meal-plans/:id/entries/:entryId', async (req, reply) => {
+    const { entryId } = req.params as { entryId: string };
+    const { date } = moveEntrySchema.parse(req.body);
+    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    if (entry.lockedByListId) {
+      reply.code(409);
+      return { message: 'This meal is locked — a shopping list already bought for it.' };
+    }
+    if (date) {
+      const household = await getHousehold();
+      const locks = await lockedDays(household.id);
+      if (locks.has(dayKey(date))) {
+        reply.code(409);
+        return { message: 'That day is locked — a shopping list already bought for it.' };
+      }
+    }
+    return prisma.mealPlanEntry.update({
+      where: { id: entryId },
+      data: { date },
+      include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+    });
   });
 
   app.delete('/meal-plans/:id/entries/:entryId', async (req, reply) => {

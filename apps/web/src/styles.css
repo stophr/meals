@@ -1,12 +1,16 @@
 :root {
   --green: #166534;
+  --green-bright: #22c55e;
   --green-light: #dcfce7;
-  --bg: #f8fafc;
+  --bg: #f2f5f3;
   --card: #ffffff;
   --text: #0f172a;
   --muted: #64748b;
   --border: #e2e8f0;
   --danger: #dc2626;
+  --radius: 14px;
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 4px 14px rgba(15, 23, 42, 0.05);
+  --shadow-lift: 0 6px 20px rgba(15, 23, 42, 0.16);
 }
 
 * {
@@ -42,11 +46,12 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: env(safe-area-inset-top, 12px) 16px 12px;
-  background: var(--green);
+  background: linear-gradient(135deg, #14532d, #166534 60%, #15803d);
   color: #fff;
   position: sticky;
   top: 0;
   z-index: 10;
+  box-shadow: var(--shadow);
 }
 .app-header h1 {
   font-size: 1.1rem;
@@ -87,8 +92,10 @@ body {
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   padding: 14px 16px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .card-title {
   font-weight: 600;
@@ -111,13 +118,18 @@ body {
 
 .btn {
   margin-top: 10px;
-  background: var(--green);
+  background: linear-gradient(135deg, #15803d, var(--green));
   color: #fff;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 16px;
   font-size: 0.95rem;
   font-weight: 600;
+  box-shadow: var(--shadow);
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+.btn:active {
+  transform: scale(0.97);
 }
 .btn:disabled {
   opacity: 0.6;
@@ -372,6 +384,153 @@ select.chip {
   margin-bottom: 12px;
   font-size: 1.05rem;
   padding: 14px;
+  border-radius: var(--radius);
+}
+
+/* --- kanban board --- */
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.lane {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.lane-over {
+  border-color: var(--green-bright);
+  background: var(--green-light);
+  box-shadow: 0 0 0 2px var(--green-bright), var(--shadow-lift);
+}
+.lane-locked {
+  background: #f1f5f9;
+  opacity: 0.8;
+}
+.lane-today .lane-day {
+  color: var(--green);
+}
+.lane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.lane-day {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.lane-date {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8rem;
+}
+.lane-empty {
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.shelf {
+  background: linear-gradient(180deg, #fff, #f6faf7);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.shelf-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  box-shadow: var(--shadow);
+  touch-action: none; /* required for touch drag */
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.tile-dragging {
+  opacity: 0.35;
+}
+.tile-ghost {
+  box-shadow: var(--shadow-lift);
+  transform: rotate(2deg) scale(1.03);
+  cursor: grabbing;
+  background: #fff;
+}
+.tile-locked {
+  cursor: default;
+  background: #f8fafc;
+}
+.tile-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.tile-img-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--green-light);
+  color: var(--green);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.tile-body {
+  flex: 1;
+  min-width: 0;
+}
+.tile-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.tile-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.tile-btn:active {
+  background: var(--border);
+}
+.tile-x:hover {
+  color: var(--danger);
+}
+.tile-lock {
+  flex-shrink: 0;
 }
 .shop-panel {
   margin-bottom: 12px;
@@ -432,8 +591,11 @@ select.chip {
   max-width: 640px;
   margin: 0 auto;
   display: flex;
-  background: var(--card);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.06);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .tab {
