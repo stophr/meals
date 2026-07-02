@@ -2,19 +2,18 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
 
-interface EntryRow {
+interface QueueEntry {
   id: string;
+  mealPlanId: string;
   date: string | null;
-  slot: string;
   servingsPlanned: number;
-  recipe: { id: string; name: string; externalRating?: number | null; complexity?: string | null };
+  locked?: boolean;
+  recipe: { id: string; name: string; externalRating?: number | null };
 }
-interface PlanRow {
-  id: string;
-  name?: string | null;
-  startDate: string;
-  endDate: string;
-  entries: EntryRow[];
+interface QueueData {
+  unassigned: QueueEntry[];
+  upcoming: QueueEntry[];
+  lockedDayKeys: string[];
 }
 interface RuleRow {
   id: string;
@@ -32,14 +31,21 @@ const RULE_LABEL: Record<string, string> = {
   WEEKLY: 'weekly',
   MONTHLY: 'monthly',
 };
+const HORIZONS = [3, 5, 7, 10, 14];
 
 function fmt(d: string) {
   const date = new Date(d);
   return `${DAY[date.getDay()]} ${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-/** Multi-select chip grid of the next 21 days. */
-function DatePicker({ onAssign }: { onAssign: (dates: string[]) => void }) {
+/** Multi-select chip grid of the next 21 days; locked days disabled. */
+function DatePicker({
+  lockedKeys,
+  onAssign,
+}: {
+  lockedKeys: Set<string>;
+  onAssign: (dates: string[]) => void;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const days = Array.from({ length: 21 }, (_, i) => {
     const d = new Date();
@@ -52,11 +58,15 @@ function DatePicker({ onAssign }: { onAssign: (dates: string[]) => void }) {
       <div className="date-grid">
         {days.map((d) => {
           const iso = d.toISOString();
+          const key = iso.slice(0, 10);
+          const locked = lockedKeys.has(key);
           const on = selected.has(iso);
           return (
             <button
               key={iso}
-              className={`chip ${on ? 'active' : ''}`}
+              disabled={locked}
+              title={locked ? 'Locked — already shopped for' : undefined}
+              className={`chip ${on ? 'active' : ''} ${locked ? 'chip-locked' : ''}`}
               onClick={() => {
                 const next = new Set(selected);
                 if (on) next.delete(iso);
@@ -64,6 +74,7 @@ function DatePicker({ onAssign }: { onAssign: (dates: string[]) => void }) {
                 setSelected(next);
               }}
             >
+              {locked ? '🔒' : ''}
               {DAY[d.getDay()]} {d.getMonth() + 1}/{d.getDate()}
             </button>
           );
@@ -82,68 +93,85 @@ function DatePicker({ onAssign }: { onAssign: (dates: string[]) => void }) {
 
 export function Plan() {
   const [nonce, setNonce] = useState(0);
-  const { data, error, loading } = useApi<PlanRow[]>(() => api.get('/meal-plans'), [nonce]);
+  const { data: queue, error, loading } = useApi<QueueData>(() => api.get('/queue'), [nonce]);
   const { data: rules } = useApi<RuleRow[]>(() => api.get('/meal-rules'), [nonce]);
   const [msg, setMsg] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [assigning, setAssigning] = useState<string>(); // entryId being assigned
+  const [assigning, setAssigning] = useState<string>();
+  const [shopOpen, setShopOpen] = useState(false);
+  const [horizon, setHorizon] = useState(7);
 
   const refresh = () => setNonce((n) => n + 1);
+  const lockedKeys = new Set(queue?.lockedDayKeys ?? []);
 
-  async function generateWeek() {
-    setBusy(true);
+  const run = async (fn: () => Promise<void>) => {
     setMsg(undefined);
     try {
-      const plan = await api.post<PlanRow>('/meal-plans/generate', {});
-      setMsg(`Planned ${plan.entries.length} dinners (repeats included).`);
-      refresh();
+      await fn();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
+  };
+
+  async function fillDays() {
+    setBusy(true);
+    await run(async () => {
+      const plan = await api.post<{ entries: unknown[] }>('/meal-plans/generate', { days: 7 });
+      setMsg(`Queued ${plan.entries.length} meals over the next 7 days (repeats included).`);
+      refresh();
+    });
+    setBusy(false);
   }
 
-  async function generateList(planId: string) {
-    const list = await api.post<{ items: unknown[] }>(`/meal-plans/${planId}/generate-list`);
-    setMsg(`Shopping list created (${list.items.length} items). See the Shop tab.`);
-  }
-
-  async function applyRules(planId: string) {
-    const res = await api.post<{ applied: number }>(`/meal-plans/${planId}/apply-rules`);
-    setMsg(`Added ${res.applied} repeating meal(s).`);
-    refresh();
-  }
-
-  async function assign(planId: string, entryId: string, dates: string[]) {
-    await api.post(`/meal-plans/${planId}/entries/${entryId}/assign`, { dates });
-    setAssigning(undefined);
-    refresh();
-  }
-
-  async function removeEntry(planId: string, entryId: string) {
-    await api.del(`/meal-plans/${planId}/entries/${entryId}`);
-    refresh();
-  }
-
-  async function removePlan(planId: string) {
-    await api.del(`/meal-plans/${planId}`);
-    refresh();
-  }
-
-  async function removeRule(id: string) {
-    await api.del(`/meal-rules/${id}`);
-    refresh();
+  async function goShopping() {
+    setBusy(true);
+    await run(async () => {
+      const list = await api.post<{ items: unknown[]; lockedMeals: number; name?: string }>(
+        '/shopping-lists/from-queue',
+        { days: horizon },
+      );
+      setShopOpen(false);
+      setMsg(
+        `List "${list.name}" built: ${list.items.length} items for ${list.lockedMeals} meal(s). ` +
+          `Those days are now locked. Optimize stores in the Shop tab.`,
+      );
+      refresh();
+    });
+    setBusy(false);
   }
 
   return (
     <section className="page">
       <div className="page-head">
-        <h2>Meal plans</h2>
-        <button className="btn btn-inline" disabled={busy} onClick={generateWeek}>
-          {busy ? 'Planning…' : '✨ Generate week'}
+        <h2>Meal queue</h2>
+        <button className="btn-link" disabled={busy} onClick={fillDays}>
+          ✨ Fill 7 days
         </button>
       </div>
+
+      <button className="btn shop-cta" onClick={() => setShopOpen(!shopOpen)}>
+        🛒 I'm going to the grocery store
+      </button>
+      {shopOpen && (
+        <div className="card shop-panel">
+          <div className="section-label">Shop how many days out?</div>
+          <div className="chips">
+            {HORIZONS.map((h) => (
+              <button
+                key={h}
+                className={`chip ${horizon === h ? 'active' : ''}`}
+                onClick={() => setHorizon(h)}
+              >
+                {h} days
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-inline" disabled={busy} onClick={goShopping}>
+            Build list for next {horizon} days
+          </button>
+        </div>
+      )}
+
       {msg && <p className="notice">{msg}</p>}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="error">{error}</p>}
@@ -160,7 +188,10 @@ export function Plan() {
                   {r.kind === 'WEEKLY' && r.weekday != null && ` (${DAY[r.weekday]})`}
                   {r.kind === 'MONTHLY' && r.dayOfMonth != null && ` (day ${r.dayOfMonth})`}
                 </span>
-                <button className="entry-x" onClick={() => removeRule(r.id)}>
+                <button
+                  className="entry-x"
+                  onClick={() => run(async () => (await api.del(`/meal-rules/${r.id}`), refresh()))}
+                >
                   ✕
                 </button>
               </li>
@@ -169,79 +200,77 @@ export function Plan() {
         </div>
       )}
 
-      {data?.length === 0 && (
+      {queue && queue.unassigned.length > 0 && (
+        <div className="card">
+          <div className="section-label">Unassigned — pick days</div>
+          <ul className="plan-entries">
+            {queue.unassigned.map((e) => (
+              <li key={e.id}>
+                <span className="plan-recipe">{e.recipe.name}</span>
+                <button
+                  className="btn-link"
+                  onClick={() => setAssigning(assigning === e.id ? undefined : e.id)}
+                >
+                  {assigning === e.id ? 'cancel' : 'assign days'}
+                </button>
+                <button
+                  className="entry-x"
+                  onClick={() =>
+                    run(async () => (await api.del(`/meal-plans/${e.mealPlanId}/entries/${e.id}`), refresh()))
+                  }
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+          {assigning &&
+            (() => {
+              const entry = queue.unassigned.find((e) => e.id === assigning);
+              return entry ? (
+                <DatePicker
+                  lockedKeys={lockedKeys}
+                  onAssign={(dates) =>
+                    run(async () => {
+                      await api.post(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}/assign`, { dates });
+                      setAssigning(undefined);
+                      refresh();
+                    })
+                  }
+                />
+              ) : null;
+            })()}
+        </div>
+      )}
+
+      <div className="section-label">Coming up</div>
+      {queue?.upcoming.length === 0 && (
         <p className="muted">
-          No plans yet — ✨ Generate a week, or stage recipes with ➕ Plan from the Recipes tab.
+          Queue is empty — ✨ Fill 7 days, or stage recipes with ➕ Plan from the Recipes tab.
         </p>
       )}
-      <ul className="card-list">
-        {data?.map((p) => {
-          const unassigned = p.entries.filter((e) => !e.date);
-          const dated = p.entries
-            .filter((e) => e.date)
-            .sort((a, b) => a.date!.localeCompare(b.date!));
-          return (
-            <li key={p.id} className="card">
-              <div className="page-head">
-                <div className="card-title">{p.name ?? 'Meal plan'}</div>
-                <button className="btn-link" onClick={() => removePlan(p.id)}>
-                  delete
-                </button>
-              </div>
-
-              {unassigned.length > 0 && (
-                <>
-                  <div className="section-label">Unassigned</div>
-                  <ul className="plan-entries">
-                    {unassigned.map((e) => (
-                      <li key={e.id}>
-                        <span className="plan-recipe">{e.recipe.name}</span>
-                        <button
-                          className="btn-link"
-                          onClick={() => setAssigning(assigning === e.id ? undefined : e.id)}
-                        >
-                          {assigning === e.id ? 'cancel' : 'assign days'}
-                        </button>
-                        <button className="entry-x" onClick={() => removeEntry(p.id, e.id)}>
-                          ✕
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {assigning && unassigned.some((e) => e.id === assigning) && (
-                    <DatePicker onAssign={(dates) => assign(p.id, assigning, dates)} />
-                  )}
-                </>
-              )}
-
-              {dated.length > 0 && (
-                <ul className="plan-entries">
-                  {dated.map((e) => (
-                    <li key={e.id}>
-                      <span className="plan-day">{fmt(e.date!)}</span>
-                      <span className="plan-recipe">{e.recipe.name}</span>
-                      {e.recipe.externalRating != null && (
-                        <span className="stars"> ★{e.recipe.externalRating.toFixed(1)}</span>
-                      )}
-                      <button className="entry-x" onClick={() => removeEntry(p.id, e.id)}>
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <div className="btn-row">
-                <button className="btn" onClick={() => generateList(p.id)}>
-                  🛒 Shopping list
-                </button>
-                <button className="btn btn-alt" onClick={() => applyRules(p.id)}>
-                  🔁 Apply repeats
-                </button>
-              </div>
-            </li>
-          );
-        })}
+      <ul className="plan-entries queue-list">
+        {queue?.upcoming.map((e) => (
+          <li key={e.id} className={e.locked ? 'locked-row' : ''}>
+            <span className="plan-day">{fmt(e.date!)}</span>
+            <span className="plan-recipe">{e.recipe.name}</span>
+            {e.recipe.externalRating != null && (
+              <span className="stars"> ★{e.recipe.externalRating.toFixed(1)}</span>
+            )}
+            {e.locked ? (
+              <span title="Locked — a shopping list bought for this day">🔒</span>
+            ) : (
+              <button
+                className="entry-x"
+                onClick={() =>
+                  run(async () => (await api.del(`/meal-plans/${e.mealPlanId}/entries/${e.id}`), refresh()))
+                }
+              >
+                ✕
+              </button>
+            )}
+          </li>
+        ))}
       </ul>
     </section>
   );

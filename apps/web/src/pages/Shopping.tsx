@@ -7,6 +7,8 @@ interface ListRow {
   id: string;
   name?: string | null;
   status: string;
+  coverageStart?: string | null;
+  coverageEnd?: string | null;
 }
 interface ListDetail extends ListRow {
   items: {
@@ -49,11 +51,31 @@ export function Shopping() {
 
       {!selected && (
         <ul className="card-list">
-          {lists?.length === 0 && <p className="muted">No lists yet — generate one from a meal plan.</p>}
+          {lists?.length === 0 && (
+            <p className="muted">No lists yet — use “🛒 I'm going to the grocery store” on the Plan tab.</p>
+          )}
           {lists?.map((l) => (
-            <li key={l.id} className="card" onClick={() => open(l.id)}>
-              <div className="card-title">{l.name ?? 'Shopping list'}</div>
-              <div className="card-sub">{l.status}</div>
+            <li key={l.id} className="card card-row" onClick={() => open(l.id)}>
+              <div className="card-main">
+                <div className="card-title">{l.name ?? 'Shopping list'}</div>
+                <div className="card-sub">
+                  {l.status}
+                  {l.coverageStart &&
+                    l.coverageEnd &&
+                    ` · locks ${new Date(l.coverageStart).getMonth() + 1}/${new Date(l.coverageStart).getDate()}–${new Date(l.coverageEnd).getMonth() + 1}/${new Date(l.coverageEnd).getDate()}`}
+                </div>
+              </div>
+              <button
+                className="entry-x"
+                title="Delete list (unlocks its days)"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  await api.del(`/shopping-lists/${l.id}`);
+                  location.reload();
+                }}
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>

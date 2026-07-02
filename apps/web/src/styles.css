@@ -366,6 +366,29 @@ select.chip {
   margin-bottom: 8px;
 }
 
+.shop-cta {
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 1.05rem;
+  padding: 14px;
+}
+.shop-panel {
+  margin-bottom: 12px;
+}
+.chip-locked {
+  opacity: 0.45;
+}
+.queue-list {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+.locked-row {
+  opacity: 0.75;
+}
+
 /* --- meal plan entries --- */
 .plan-entries {
   list-style: none;

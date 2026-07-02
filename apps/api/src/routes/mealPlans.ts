@@ -13,6 +13,8 @@ import { getHousehold } from '../lib/household.js';
 import { pantryTotals } from '../lib/inventory.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { materializeRules, activeRules } from '../lib/mealRules.js';
+import { lockedDays, dayKey } from '../lib/queue.js';
+import { buildShoppingList } from '../lib/shoppingBuild.js';
 
 const DAY_MS = 86_400_000;
 
@@ -65,6 +67,14 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   app.post('/meal-plans/:id/entries', async (req, reply) => {
     const { id } = req.params as { id: string };
     const data = mealPlanEntryCreateSchema.parse(req.body);
+    if (data.date) {
+      const household = await getHousehold();
+      const locks = await lockedDays(household.id);
+      if (locks.has(dayKey(data.date))) {
+        reply.code(409);
+        return { message: 'That day is locked — a shopping list already bought for it.' };
+      }
+    }
     reply.code(201);
     return prisma.mealPlanEntry.create({
       data: {
@@ -97,10 +107,23 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   });
 
   // Assign a staged entry to one or more dates: first date fills the entry, extras clone it.
-  app.post('/meal-plans/:id/entries/:entryId/assign', async (req) => {
+  app.post('/meal-plans/:id/entries/:entryId/assign', async (req, reply) => {
     const { id, entryId } = req.params as { id: string; entryId: string };
     const { dates } = assignEntrySchema.parse(req.body);
     const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    if (entry.lockedByListId) {
+      reply.code(409);
+      return { message: 'This meal is locked — a shopping list already bought for it.' };
+    }
+    const household = await getHousehold();
+    const locks = await lockedDays(household.id);
+    const blocked = dates.filter((d) => locks.has(dayKey(d)));
+    if (blocked.length) {
+      reply.code(409);
+      return {
+        message: `Locked day(s): ${blocked.map((d) => dayKey(d)).join(', ')} — already shopped for.`,
+      };
+    }
 
     const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
     const created = await prisma.$transaction(async (tx) => {
@@ -171,10 +194,15 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     const days = Math.max(1, Math.round((plan.endDate.getTime() - plan.startDate.getTime()) / DAY_MS) + 1);
     const rules = await activeRules(household.id);
     const wanted = materializeRules(rules, plan.startDate, days);
+    const locks = await lockedDays(household.id);
     const existing = new Set(
       plan.entries.filter((e) => e.date).map((e) => `${e.recipeId}|${e.date!.toISOString().slice(0, 10)}`),
     );
-    const fresh = wanted.filter((w) => !existing.has(`${w.recipeId}|${w.date.toISOString().slice(0, 10)}`));
+    const fresh = wanted.filter(
+      (w) =>
+        !existing.has(`${w.recipeId}|${w.date.toISOString().slice(0, 10)}`) &&
+        !locks.has(dayKey(w.date)),
+    );
     await prisma.mealPlanEntry.createMany({
       data: fresh.map((w) => ({
         mealPlanId: id,
@@ -189,6 +217,11 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.delete('/meal-plans/:id/entries/:entryId', async (req, reply) => {
     const { entryId } = req.params as { entryId: string };
+    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    if (entry.lockedByListId) {
+      reply.code(409);
+      return { message: 'This meal is locked — a shopping list already bought for it.' };
+    }
     await prisma.mealPlanEntry.delete({ where: { id: entryId } });
     reply.code(204);
   });
@@ -283,15 +316,33 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     });
     scored.sort((a, b) => b.score - a.score);
 
-    // Recurring meals claim their dates first; picks fill the remaining days.
+    // The generator FILLS THE QUEUE: days that already have a meal or are locked by a
+    // shopping list are skipped; rules claim their dates next; picks fill what's left.
     const start = opts.startDate ?? new Date();
     start.setHours(12, 0, 0, 0);
-    const ruleEntries = materializeRules(await activeRules(household.id), start, opts.days);
-    const ruleDates = new Set(ruleEntries.map((r) => r.date.toISOString().slice(0, 10)));
+    const rangeEnd = new Date(start.getTime() + opts.days * 86_400_000);
+    const [locks, existingEntries] = await Promise.all([
+      lockedDays(household.id),
+      prisma.mealPlanEntry.findMany({
+        where: {
+          mealPlan: { householdId: household.id },
+          date: { gte: new Date(start.getTime() - 86_400_000), lt: rangeEnd },
+        },
+        select: { date: true },
+      }),
+    ]);
+    const taken = new Set(existingEntries.filter((e) => e.date).map((e) => dayKey(e.date!)));
+    for (const k of locks.keys()) taken.add(k);
+
+    const ruleEntries = materializeRules(await activeRules(household.id), start, opts.days).filter(
+      (r) => !taken.has(dayKey(r.date)),
+    );
+    for (const r of ruleEntries) taken.add(dayKey(r.date));
+
     const freeDates: Date[] = [];
     for (let i = 0; i < opts.days; i++) {
       const d = new Date(start.getTime() + i * 86_400_000);
-      if (!ruleDates.has(d.toISOString().slice(0, 10))) freeDates.push(d);
+      if (!taken.has(dayKey(d))) freeDates.push(d);
     }
     const picks: Candidate[] = [];
     const cuisineCount = new Map<string, number>();
@@ -318,41 +369,39 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     pickFrom(false);
     if (picks.length < freeDates.length) pickFrom(true);
 
-    const plan = await prisma.mealPlan.create({
-      data: {
-        householdId: household.id,
-        name: `Week of ${start.toISOString().slice(0, 10)}`,
-        startDate: start,
-        endDate: new Date(start.getTime() + (opts.days - 1) * 86_400_000),
-        entries: {
-          create: [
-            ...ruleEntries.map((e) => ({
-              recipeId: e.recipeId,
-              date: e.date,
-              slot: e.slot,
-              servingsPlanned: e.servings ?? 2,
-            })),
-            ...picks.map((r, i) => ({
-              recipeId: r.id,
-              date: freeDates[i]!,
-              slot: opts.slot,
-              servingsPlanned: r.servings || 2,
-            })),
-          ],
-        },
-      },
-      include: { entries: { include: { recipe: true } } },
+    // Add to the rolling queue plan rather than creating a new plan per generation.
+    const plan = await currentPlan(household.id);
+    await prisma.mealPlanEntry.createMany({
+      data: [
+        ...ruleEntries.map((e) => ({
+          mealPlanId: plan.id,
+          recipeId: e.recipeId,
+          date: e.date,
+          slot: e.slot,
+          servingsPlanned: e.servings ?? 2,
+        })),
+        ...picks.map((r, i) => ({
+          mealPlanId: plan.id,
+          recipeId: r.id,
+          date: freeDates[i]!,
+          slot: opts.slot,
+          servingsPlanned: r.servings || 2,
+        })),
+      ],
+    });
+    const withEntries = await prisma.mealPlan.findUniqueOrThrow({
+      where: { id: plan.id },
+      include: { entries: { include: { recipe: true }, where: { date: { gte: start, lt: rangeEnd } } } },
     });
     reply.code(201);
-    return plan;
+    return withEntries;
   });
 
-  // Aggregate ingredients across the plan (scaled by servings), subtract inventory on hand,
-  // and materialize a shopping list of what still needs buying — all in base units.
+  // Legacy per-plan list build (the queue's "going shopping" flow in shoppingLists.ts is
+  // the primary path now).
   app.post('/meal-plans/:id/generate-list', async (req) => {
     const { id } = req.params as { id: string };
     const household = await getHousehold();
-
     const plan = await prisma.mealPlan.findUniqueOrThrow({
       where: { id },
       include: {
@@ -361,50 +410,37 @@ export async function mealPlanRoutes(app: FastifyInstance) {
         },
       },
     });
-
-    // canonicalItemId -> { neededBase, unit, name }
-    const needed = new Map<string, { base: number; unit: Unit; name: string }>();
-    for (const entry of plan.entries) {
-      const servings = entry.recipe.servings || 1;
-      const ratio = entry.servingsPlanned / servings;
-      for (const ing of entry.recipe.ingredients) {
-        if (!ing.canonicalItemId || ing.baseQuantity == null || ing.optional) continue;
-        const add = Number(ing.baseQuantity) * ratio;
-        const prev = needed.get(ing.canonicalItemId);
-        const unit = ing.canonicalItem?.baseUnit ?? ing.unit;
-        if (prev) prev.base += add;
-        else needed.set(ing.canonicalItemId, { base: add, unit, name: ing.canonicalItem?.name ?? 'item' });
-      }
-    }
-
-    // Subtract inventory on hand.
-    const inventory = await prisma.inventoryLot.groupBy({
-      by: ['canonicalItemId'],
-      where: { householdId: household.id, canonicalItemId: { in: [...needed.keys()] } },
-      _sum: { baseQuantity: true },
+    return buildShoppingList(household.id, plan.entries, {
+      name: plan.name ? `${plan.name} list` : 'Shopping list',
+      mealPlanId: plan.id,
     });
-    for (const row of inventory) {
-      const entry = needed.get(row.canonicalItemId);
-      if (entry && row._sum.baseQuantity) entry.base -= Number(row._sum.baseQuantity);
-    }
+  });
 
-    const items = [...needed.entries()].filter(([, v]) => v.base > 0.0001);
-
-    return prisma.shoppingList.create({
-      data: {
-        householdId: household.id,
-        mealPlanId: plan.id,
-        name: plan.name ? `${plan.name} list` : 'Shopping list',
-        items: {
-          create: items.map(([canonicalItemId, v]) => ({
-            canonicalItemId,
-            quantityNeeded: v.base.toString(),
-            unit: v.unit,
-            baseQuantityNeeded: v.base.toString(),
-          })),
-        },
-      },
-      include: { items: { include: { canonicalItem: true } } },
-    });
+  // The rolling meal queue: unassigned staging + upcoming dated meals + locked days.
+  app.get('/queue', async () => {
+    const household = await getHousehold();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const [unassigned, upcoming, locks] = await Promise.all([
+      prisma.mealPlanEntry.findMany({
+        where: { mealPlan: { householdId: household.id }, date: null },
+        include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.mealPlanEntry.findMany({
+        where: { mealPlan: { householdId: household.id }, date: { gte: today } },
+        include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+        orderBy: { date: 'asc' },
+      }),
+      lockedDays(household.id),
+    ]);
+    return {
+      unassigned,
+      upcoming: upcoming.map((e) => ({
+        ...e,
+        locked: e.lockedByListId != null || locks.has(dayKey(e.date!)),
+      })),
+      lockedDayKeys: [...locks.keys()].sort(),
+    };
   });
 }

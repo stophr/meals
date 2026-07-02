@@ -207,6 +207,11 @@ export const shoppingListCreateSchema = z.object({
   name: z.string().optional(),
   mealPlanId: cuid.optional(),
 });
+
+/** "I'm going to the grocery store" — build a list for the next N days of queued meals. */
+export const shopFromQueueSchema = z.object({
+  days: z.number().int().min(1).max(30).default(7),
+});
 export const shoppingListItemUpdateSchema = z.object({
   assignedProviderId: cuid.nullish(),
   chosenProductId: cuid.nullish(),

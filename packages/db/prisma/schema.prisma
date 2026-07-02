@@ -391,8 +391,14 @@ model MealPlanEntry {
   slot            String    @default("dinner")
   servingsPlanned Int       @default(1)
 
+  // Set when a shopping list bought for this meal; cleared automatically if that list
+  // is deleted. Locked entries reject edits.
+  lockedByListId String?
+  lockedByList   ShoppingList? @relation("LockedEntries", fields: [lockedByListId], references: [id], onDelete: SetNull)
+
   @@index([mealPlanId])
   @@index([recipeId])
+  @@index([lockedByListId])
 }
 
 // Recurring meals: "tacos every Tuesday", "pizza once a week on a random day",
@@ -434,13 +440,19 @@ model ShoppingList {
   name   String?
   status String @default("draft") // draft | optimized | shopping | done
 
+  // Shopping horizon this list bought for. Days inside [coverageStart, coverageEnd] are
+  // LOCKED for meal edits while this list exists; deleting the list unlocks them.
+  coverageStart DateTime?
+  coverageEnd   DateTime?
+
   // Cached optimizer result (chosen option + alternatives) for offline/in-store use.
   optimizationResult Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items ShoppingListItem[]
+  items         ShoppingListItem[]
+  lockedEntries MealPlanEntry[]    @relation("LockedEntries")
 
   @@index([householdId])
   @@index([mealPlanId])
