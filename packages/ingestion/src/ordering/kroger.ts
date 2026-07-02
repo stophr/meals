@@ -5,12 +5,18 @@
 //   Cart:      add items to the signed-in user's actual cart (OAuth authorization-code)
 // Client-credentials tokens cover locations+products; the cart needs a user token.
 
-const API = 'https://api.kroger.com/v1';
+const DEFAULT_API = 'https://api.kroger.com/v1';
 
 export interface KrogerConfig {
   clientId: string;
   clientSecret: string;
   redirectUri?: string; // required only for the user-auth (cart) flow
+  /** API host — apps created in Kroger's new (CE) portal use https://api-ce.kroger.com/v1 */
+  baseUrl?: string;
+}
+
+function apiBase(cfg: KrogerConfig): string {
+  return (cfg.baseUrl ?? DEFAULT_API).replace(/\/$/, '');
 }
 
 export interface KrogerLocation {
@@ -50,7 +56,7 @@ function basicAuth(cfg: KrogerConfig): string {
 }
 
 async function tokenRequest(cfg: KrogerConfig, body: URLSearchParams): Promise<KrogerTokens> {
-  const res = await fetch(`${API}/connect/oauth2/token`, {
+  const res = await fetch(`${apiBase(cfg)}/connect/oauth2/token`, {
     method: 'POST',
     headers: {
       authorization: basicAuth(cfg),
@@ -85,7 +91,7 @@ export function authorizeUrl(cfg: KrogerConfig, state: string): string {
     scope: 'cart.basic:write profile.compact',
     state,
   });
-  return `${API}/connect/oauth2/authorize?${params}`;
+  return `${apiBase(cfg)}/connect/oauth2/authorize?${params}`;
 }
 
 export async function exchangeCode(cfg: KrogerConfig, code: string): Promise<KrogerTokens> {
@@ -106,8 +112,8 @@ export async function refreshUserToken(cfg: KrogerConfig, refreshToken: string):
   );
 }
 
-async function apiGet<T>(token: string, path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+async function apiGet<T>(base: string, token: string, path: string): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
     signal: AbortSignal.timeout(15000),
   });
@@ -124,6 +130,7 @@ interface RawLocation {
 }
 
 export async function searchLocations(
+  cfg: KrogerConfig,
   token: string,
   opts: { zip: string; chain?: string; limit?: number },
 ): Promise<KrogerLocation[]> {
@@ -132,7 +139,7 @@ export async function searchLocations(
     'filter.limit': String(opts.limit ?? 10),
   });
   if (opts.chain) params.set('filter.chain', opts.chain);
-  const data = await apiGet<{ data: RawLocation[] }>(token, `/locations?${params}`);
+  const data = await apiGet<{ data: RawLocation[] }>(apiBase(cfg), token, `/locations?${params}`);
   return (data.data ?? []).map((l) => ({
     locationId: l.locationId,
     chain: l.chain,
@@ -174,24 +181,32 @@ export function mapProduct(p: RawProduct): KrogerProduct {
 }
 
 export async function searchProducts(
+  cfg: KrogerConfig,
   token: string,
-  opts: { term: string; locationId: string; limit?: number },
+  opts: { term: string; locationId: string; limit?: number; timeoutMs?: number },
 ): Promise<KrogerProduct[]> {
   const params = new URLSearchParams({
     'filter.term': opts.term.slice(0, 128),
     'filter.locationId': opts.locationId,
     'filter.limit': String(opts.limit ?? 8),
   });
-  const data = await apiGet<{ data: RawProduct[] }>(token, `/products?${params}`);
+  const res = await fetch(`${apiBase(cfg)}/products?${params}`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 15000),
+  });
+  if (!res.ok)
+    throw new Error(`Kroger HTTP ${res.status} on /products: ${await res.text().catch(() => '')}`);
+  const data = (await res.json()) as { data: RawProduct[] };
   return (data.data ?? []).map(mapProduct);
 }
 
 /** Add items to the signed-in user's real Kroger/Fry's cart. */
 export async function addToCart(
+  cfg: KrogerConfig,
   userToken: string,
   items: { upc: string; quantity: number }[],
 ): Promise<void> {
-  const res = await fetch(`${API}/cart/add`, {
+  const res = await fetch(`${apiBase(cfg)}/cart/add`, {
     method: 'PUT',
     headers: {
       authorization: `Bearer ${userToken}`,

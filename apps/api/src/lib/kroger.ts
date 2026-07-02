@@ -16,6 +16,7 @@ export function krogerConfig(): KrogerConfig | null {
     clientId: env.KROGER_CLIENT_ID,
     clientSecret: env.KROGER_CLIENT_SECRET,
     redirectUri: env.KROGER_REDIRECT_URI,
+    baseUrl: env.KROGER_API_BASE,
   };
 }
 
@@ -75,13 +76,31 @@ export async function syncPrices(
   const token = await getAppToken(cfg);
   const result: SyncResult = { itemsQueried: 0, productsUpserted: 0, pricesRecorded: 0, unmatched: [] };
 
+  // Kroger's gateway HANGS (rather than 403s) when the app isn't entitled to the Products
+  // API — fail fast after consecutive network failures instead of timing out per item.
+  let consecutiveFailures = 0;
+
   for (const item of items) {
     result.itemsQueried++;
     let products;
     try {
-      products = await searchProducts(token, { term: item.name, locationId, limit: 6 });
-    } catch {
+      products = await searchProducts(cfg, token, {
+        term: item.name,
+        locationId,
+        limit: 6,
+        timeoutMs: 8000,
+      });
+      consecutiveFailures = 0;
+    } catch (err) {
+      consecutiveFailures++;
       result.unmatched.push(item.name);
+      if (consecutiveFailures >= 3) {
+        throw new Error(
+          'Kroger Products API is not responding for this app. In the Kroger developer portal, ' +
+            'open your application and make sure the PRODUCTS API is added/enabled (Locations works, ' +
+            `Products hangs). Last error: ${err instanceof Error ? err.message : err}`,
+        );
+      }
       continue;
     }
     if (!products.length) {

@@ -46,7 +46,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       return { message: 'zip required' };
     }
     const token = await getAppToken(cfg);
-    return searchLocations(token, { zip, chain: chain ?? 'FRYS' });
+    return searchLocations(cfg, token, { zip, chain: chain ?? 'FRYS' });
   });
 
   // Attach a Kroger location to one of our providers.
@@ -175,7 +175,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       reply.code(422);
       return { message: 'No cart-pushable items (run optimize + sync-prices first so items have Kroger products)' };
     }
-    await addToCart(userToken, push);
+    await addToCart(cfg, userToken, push);
     return { pushed: push.length, items: push };
   });
 

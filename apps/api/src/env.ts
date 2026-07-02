@@ -24,6 +24,8 @@ const envSchema = z.object({
   KROGER_CLIENT_ID: z.string().default(''),
   KROGER_CLIENT_SECRET: z.string().default(''),
   KROGER_REDIRECT_URI: z.string().default('http://localhost:8090/api/integrations/kroger/callback'),
+  // New-portal (CE) apps: https://api-ce.kroger.com/v1
+  KROGER_API_BASE: z.string().default('https://api.kroger.com/v1'),
 
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
