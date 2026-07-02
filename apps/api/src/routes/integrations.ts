@@ -9,8 +9,10 @@ import {
   walmartCartLink,
   safewaySearchLinks,
 } from '@meals/ingestion';
+import { costcoImportSchema } from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
 import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices } from '../lib/kroger.js';
+import { recordCostcoPrices } from '../lib/costcoPrices.js';
 
 // Short-lived state values for the OAuth redirect round-trip (CSRF protection).
 const pendingStates = new Map<string, number>();
@@ -214,6 +216,19 @@ export async function integrationRoutes(app: FastifyInstance) {
       data: { status: 'approved' },
     });
     return { approved: res.count };
+  });
+
+  // Costco price import from the bookmarklet (paste). Records under the Costco provider.
+  app.post('/integrations/costco/receipts', async (req, reply) => {
+    const data = costcoImportSchema.parse(req.body);
+    const household = await getHousehold();
+    try {
+      const res = await recordCostcoPrices(household.id, data.items);
+      return res;
+    } catch (err) {
+      reply.code(400);
+      return { message: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   // ---- Walmart / Safeway assisted cart links (no middleman, first-party prices) ----

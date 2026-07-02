@@ -238,6 +238,23 @@ export const shoppingListItemUpdateSchema = z.object({
 });
 export type ShoppingListCreate = z.infer<typeof shoppingListCreateSchema>;
 
+// ---- Costco price import (bookmarklet paste) ----
+export const costcoImportSchema = z.object({
+  source: z.string().optional(),
+  items: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        price: z.number().positive(),
+        itemNumber: z.string().optional(),
+        size: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .max(1000),
+});
+export type CostcoImport = z.infer<typeof costcoImportSchema>;
+
 // ---- Settings ----
 export const settingsUpdateSchema = z.object({
   name: z.string().optional(),

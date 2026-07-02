@@ -781,3 +781,31 @@ select.chip {
   margin-top: 4px;
   font-weight: 600;
 }
+
+/* --- costco import --- */
+.costco-steps {
+  margin: 8px 0;
+  padding-left: 20px;
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+.bookmarklet {
+  display: inline-block;
+  background: var(--green);
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  cursor: grab;
+}
+.paste-box {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 0.85rem;
+  font-family: monospace;
+  margin: 8px 0;
+  resize: vertical;
+}

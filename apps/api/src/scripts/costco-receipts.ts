@@ -13,8 +13,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 import type { BrowserContext, Page } from 'playwright';
-import { prisma, PriceSource } from '@meals/db';
-import { matchLine, normalizeName } from '@meals/core';
+import { prisma } from '@meals/db';
+import { recordCostcoPrices } from '../lib/costcoPrices.js';
 
 const HOST = 'https://www.costco.com';
 
@@ -159,63 +159,12 @@ async function fetchReceipts() {
   }
   console.log(`fetched ${lines.length} receipt line(s) via ${used} (last ${months} months)`);
 
-  // Latest price per item number wins.
-  const latest = new Map<string, ReceiptLine>();
-  for (const line of lines) {
-    const prev = latest.get(line.itemNumber);
-    if (!prev || line.date > prev.date) latest.set(line.itemNumber, line);
-  }
-
-  const items = await prisma.canonicalItem.findMany({ where: { householdId: household.id } });
-  const candidates = items.map((i) => ({ productId: i.id, text: i.name }));
-
-  let recorded = 0;
-  let linked = 0;
-  for (const line of latest.values()) {
-    // Costco receipt abbreviations are rough ("KS ORG EVOO") — only confident matches link.
-    const match = candidates.length ? matchLine(line.description, candidates) : null;
-    const canonicalItemId = match?.decision === 'auto' ? match.productId : null;
-    if (canonicalItemId) linked++;
-
-    const product = await prisma.providerProduct.upsert({
-      where: { providerId_upc: { providerId: costco.id, upc: `costco:${line.itemNumber}` } },
-      create: {
-        providerId: costco.id,
-        canonicalItemId,
-        rawName: line.description,
-        sku: line.itemNumber,
-        upc: `costco:${line.itemNumber}`,
-      },
-      update: { ...(canonicalItemId ? { canonicalItemId } : {}) },
-    });
-    await prisma.priceObservation.create({
-      data: {
-        providerProductId: product.id,
-        price: line.price.toFixed(2),
-        source: PriceSource.SCRAPE,
-        observedAt: line.date,
-        validTo: new Date(line.date.getTime() + 60 * 86_400_000), // warehouse prices move slowly
-        rawText: `${line.description} #${line.itemNumber}`,
-      },
-    });
-    await prisma.productAlias.upsert({
-      where: {
-        providerId_normalizedRawName: {
-          providerId: costco.id,
-          normalizedRawName: normalizeName(line.description),
-        },
-      },
-      create: {
-        providerId: costco.id,
-        normalizedRawName: normalizeName(line.description),
-        providerProductId: product.id,
-      },
-      update: { providerProductId: product.id },
-    });
-    recorded++;
-  }
+  const res = await recordCostcoPrices(
+    household.id,
+    lines.map((l) => ({ name: l.description, price: l.price, itemNumber: l.itemNumber, date: l.date })),
+  );
   console.log(
-    `DONE — ${recorded} Costco prices recorded (${linked} auto-linked to your items; unlinked ones link as the catalog grows or via receipt review)`,
+    `DONE — ${res.recorded} Costco prices recorded (${res.linked} auto-linked; unlinked link as the catalog grows or via receipt review)`,
   );
 }
 
