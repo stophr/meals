@@ -90,8 +90,19 @@ export function ingredientLinesOf(row: FoodComRow): string[] {
     .filter(Boolean);
 }
 
+/** Food.com names/text carry HTML entities (&quot;, &amp;, &#39;). */
+export function decodeEntities(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 export function mapFoodComRow(row: FoodComRow): NormalizedRecipe | null {
-  const name = row.Name?.trim();
+  const name = row.Name ? decodeEntities(row.Name).trim() : undefined;
   const lines = ingredientLinesOf(row);
   if (!name || lines.length === 0) return null;
 

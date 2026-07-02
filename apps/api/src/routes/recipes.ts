@@ -71,11 +71,17 @@ export async function recipeRoutes(app: FastifyInstance) {
     const pantry = await pantryTotals(household.id);
 
     if (query.cookable) {
-      // Only recipes with at least one pantry-linked ingredient can be cookable, so restrict
-      // the candidate set in SQL first — keeps this exact even with a 250K+ imported catalog
-      // (bulk-imported recipes are unlinked until the canonical catalog grows).
+      // A recipe can only be fully cookable when every required ingredient is pantry-linked,
+      // so restrict candidates in SQL first (coverage math itself runs in JS). The 2000 cap
+      // is a safety net; results beyond it are truncated at extreme catalog sizes.
       const all = await prisma.recipe.findMany({
-        where: { ...where, ingredients: { some: { canonicalItemId: { not: null } } } },
+        where: {
+          ...where,
+          AND: [
+            { ingredients: { some: { canonicalItemId: { not: null } } } },
+            { ingredients: { none: { canonicalItemId: null, optional: false } } },
+          ],
+        },
         orderBy,
         include: ingredientInclude,
         take: 2000,
