@@ -38,7 +38,7 @@ function cookTonightCost(
 }
 
 const ingredientInclude = {
-  ingredients: { include: { canonicalItem: { select: { name: true } } } },
+  ingredients: { include: { canonicalItem: { select: { name: true, assumeStocked: true } } } },
 } satisfies Prisma.RecipeInclude;
 
 export async function recipeRoutes(app: FastifyInstance) {

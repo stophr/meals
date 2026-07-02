@@ -15,7 +15,7 @@ interface CoverageIngredient {
   unit?: Unit | null;
   optional: boolean;
   freeText?: string | null;
-  canonicalItem?: { name: string } | null;
+  canonicalItem?: { name?: string; assumeStocked?: boolean } | null;
 }
 
 function ingredientDimension(unit: Unit | null | undefined): UnitDimension {
@@ -28,10 +28,15 @@ export function recipeCoverage(
 ): RecipeCoverage {
   // Aggregate needs per (item, dimension) — a recipe may use the same item twice.
   const needs = new Map<string, { itemId: string; name: string; dim: UnitDimension; needed: number }>();
+  const alwaysStocked: string[] = []; // water/ice — assumed on hand, never "missing"
   let unlinkedCount = 0;
 
   for (const ing of ingredients) {
     if (ing.optional) continue;
+    if (ing.canonicalItemId && ing.canonicalItem?.assumeStocked) {
+      alwaysStocked.push(ing.canonicalItemId);
+      continue;
+    }
     if (!ing.canonicalItemId || ing.baseQuantity == null) {
       unlinkedCount++;
       continue;
@@ -64,6 +69,8 @@ export function recipeCoverage(
     missing,
     unlinkedCount,
     cookable: needs.size > 0 && missing.length === 0,
-    satisfiedItemIds,
+    // Always-stocked staples are excluded from the required count but reported as satisfied
+    // so cook-tonight costing doesn't try to buy them.
+    satisfiedItemIds: [...satisfiedItemIds, ...alwaysStocked],
   };
 }

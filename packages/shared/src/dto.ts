@@ -33,6 +33,7 @@ export const canonicalItemCreateSchema = z.object({
   baseDimension: unitDimensionSchema.optional(),
   recipeUnit: unitSchema.optional(),
   purchaseUnit: unitSchema.optional(),
+  assumeStocked: z.boolean().optional(),
 });
 export const canonicalItemUpdateSchema = canonicalItemCreateSchema.partial();
 export type CanonicalItemCreate = z.infer<typeof canonicalItemCreateSchema>;

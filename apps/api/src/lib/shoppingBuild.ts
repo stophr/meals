@@ -35,6 +35,7 @@ export async function buildShoppingList(
     const ratio = entry.servingsPlanned / servings;
     for (const ing of entry.recipe.ingredients) {
       if (!ing.canonicalItemId || ing.baseQuantity == null || ing.optional) continue;
+      if (ing.canonicalItem?.assumeStocked) continue; // water/ice — assumed on hand
       const dim = ing.unit ? dimensionOf(ing.unit) : 'COUNT';
       const key = `${ing.canonicalItemId}:${dim}`;
       const add = Number(ing.baseQuantity) * ratio;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { UNITS, UNIT_TABLE } from '@meals/shared';
+import { UNITS, UNIT_TABLE, BASE_UNIT } from '@meals/shared';
 import type { UnitDimension } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
@@ -42,7 +42,13 @@ interface Lot {
   unit: string;
   location?: string | null;
   expiresAt?: string | null;
-  canonicalItem: { id: string; name: string; category?: string | null; baseUnit?: string | null };
+  canonicalItem: {
+    id: string;
+    name: string;
+    category?: string | null;
+    baseUnit?: string | null;
+    assumeStocked?: boolean;
+  };
 }
 interface ItemHit {
   id: string;
@@ -85,6 +91,11 @@ export interface LotPatch {
   location?: string;
   expiresAt?: string;
 }
+export interface ItemPatch {
+  assumeStocked?: boolean;
+  baseUnit?: string;
+  baseDimension?: string;
+}
 
 /** Bottom sheet to edit every attribute of one pantry lot: amount, unit, location, expiry. */
 function LotSheet({
@@ -93,16 +104,33 @@ function LotSheet({
   onClose,
 }: {
   lot: Lot;
-  onSave: (patch: LotPatch) => void;
+  onSave: (patch: LotPatch, item: ItemPatch) => void;
   onClose: () => void;
 }) {
   const [qty, setQty] = useState(Number(lot.quantity));
   const [unit, setUnit] = useState(lot.unit);
   const [location, setLocation] = useState(lot.location ?? '');
   const [expires, setExpires] = useState(lot.expiresAt ? lot.expiresAt.slice(0, 10) : '');
+  const [stocked, setStocked] = useState(lot.canonicalItem.assumeStocked ?? false);
   const step = ['G', 'ML'].includes(unit) ? 50 : ['KG', 'L', 'LB'].includes(unit) ? 0.5 : 1;
   const dim = UNIT_TABLE[unit as keyof typeof UNIT_TABLE]?.dimension;
   const dimLabel = dim === 'MASS' ? 'by weight' : dim === 'VOLUME' ? 'by volume' : 'by count';
+
+  function save() {
+    if (qty <= 0) return;
+    const item: ItemPatch = {};
+    if (stocked !== (lot.canonicalItem.assumeStocked ?? false)) item.assumeStocked = stocked;
+    // Persist the item's default measurement type so future adds don't default to "count".
+    const desiredBase = BASE_UNIT[dim];
+    if (desiredBase !== lot.canonicalItem.baseUnit) {
+      item.baseUnit = desiredBase;
+      item.baseDimension = dim;
+    }
+    onSave(
+      { quantity: qty, unit, location: location.trim() || undefined, expiresAt: expires || undefined },
+      item,
+    );
+  }
 
   return (
     <div className="sheet">
@@ -142,21 +170,12 @@ function LotSheet({
           onChange={(e) => setExpires(e.target.value)}
         />
       </div>
+      <label className="sheet-row sheet-check">
+        <input type="checkbox" checked={stocked} onChange={(e) => setStocked(e.target.checked)} />
+        <span>Always in stock (like water) — never add to shopping lists</span>
+      </label>
       <div className="sheet-row">
-        <button
-          className="chip active"
-          onClick={() =>
-            qty > 0
-              ? onSave({
-                  quantity: qty,
-                  unit,
-                  location: location.trim() || undefined,
-                  expiresAt: expires || undefined,
-                })
-              : undefined
-          }
-          disabled={qty <= 0}
-        >
+        <button className="chip active" onClick={save} disabled={qty <= 0}>
           save
         </button>
         <button className="chip" onClick={onClose}>
@@ -262,11 +281,12 @@ export function Inventory() {
     }
   }
 
-  async function saveLot(lot: Lot, patch: LotPatch) {
+  async function saveLot(lot: Lot, patch: LotPatch, item: ItemPatch) {
     setMsg(undefined);
     setEditing(undefined);
     try {
       await api.patch(`/inventory/${lot.id}`, patch);
+      if (Object.keys(item).length) await api.patch(`/items/${lot.canonicalItem.id}`, item);
       refresh();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -339,6 +359,7 @@ export function Inventory() {
               <li key={lot.id}>
                 <span className="plan-recipe">{lot.canonicalItem.name}</span>
                 {lot.location && <span className="muted"> · {lot.location}</span>}
+                {lot.canonicalItem.assumeStocked && <span className="badge badge-ok">always</span>}
                 {expiryBadge(lot.expiresAt)}
                 <button
                   className="tile-servings"
@@ -359,7 +380,7 @@ export function Inventory() {
       {editing && (
         <LotSheet
           lot={editing}
-          onSave={(patch) => saveLot(editing, patch)}
+          onSave={(patch, item) => saveLot(editing, patch, item)}
           onClose={() => setEditing(undefined)}
         />
       )}

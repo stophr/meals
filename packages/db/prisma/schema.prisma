@@ -147,6 +147,10 @@ model CanonicalItem {
   recipeUnit   Unit?
   purchaseUnit Unit?
 
+  // Always-on-hand staples (water, tap water, ice): assumed in stock, so they never
+  // count as "missing" for cook-from-pantry and are skipped when building shopping lists.
+  assumeStocked Boolean @default(false)
+
   // Normalized dedup key (lowercased, unit/pack stripped) — used by the matcher.
   normKey String
 

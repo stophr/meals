@@ -281,9 +281,13 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     const categoryOk = (category: string | null) =>
       !isDinner || (!!category && mainsRe.test(category));
 
-    type Candidate = Recipe & { ingredients: RecipeIngredient[] };
+    type Candidate = Recipe & {
+      ingredients: (RecipeIngredient & { canonicalItem: { assumeStocked: boolean } | null })[];
+    };
     const pool = new Map<string, Candidate>();
-    const include = { ingredients: true } as const;
+    const include = {
+      ingredients: { include: { canonicalItem: { select: { assumeStocked: true } } } },
+    } as const;
 
     // Favorites always make the pool (category-filtered for dinner slots).
     for (const r of await prisma.recipe.findMany({

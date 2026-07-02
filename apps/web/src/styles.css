@@ -691,6 +691,15 @@ select.chip {
   flex: 1 1 100%;
   text-align: left;
 }
+.sheet-check {
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.sheet-check input {
+  width: 18px;
+  height: 18px;
+}
 .pantry-list {
   margin-bottom: 14px;
 }
