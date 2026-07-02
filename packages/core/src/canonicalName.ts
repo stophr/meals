@@ -6,7 +6,8 @@
 
 // Measure/quantity words that show up as leaked prefixes ("Pinch Of Sugar", "Tblsp Butter").
 const MEASURE = new Set([
-  'pinch', 'pinches', 'dash', 'dashes', 'splash', 'handful', 'knob',
+  'pinch', 'pinches', 'dash', 'dashes', 'splash', 'splashes', 'handful', 'handfuls', 'handfulls',
+  'knob', 'knobs', 'pony', 'shot', 'shots', 'segment', 'segments', 'glass', 'glasses', 'drop', 'drops',
   'tbsp', 'tbsps', 'tblsp', 'tblsps', 'tbs', 'tablespoon', 'tablespoons',
   'tsp', 'tsps', 'teaspoon', 'teaspoons', 'cup', 'cups', 'oz', 'ounce', 'ounces',
   'lb', 'lbs', 'pound', 'pounds', 'g', 'gr', 'gram', 'grams', 'kg', 'mg',
@@ -25,6 +26,7 @@ const PREP = new Set([
   'boneless', 'skinless', 'large', 'small', 'medium', 'ripe', 'unripe',
   'warm', 'cold', 'chilled', 'finely', 'coarsely', 'roughly', 'thinly', 'thickly',
   'extra', 'optional', 'assorted', 'mixed', 'good', 'quality', 'nice',
+  'sprinkling', 'sprinkle', 'drizzle', 'drizzling', 'generous', 'scant', 'heaped', 'heaping',
 ]);
 
 // Connectives dropped anywhere.
