@@ -281,24 +281,31 @@ export function Plan() {
   const refresh = () => setNonce((n) => n + 1);
   const lockedKeys = useMemo(() => new Set(queue?.lockedDayKeys ?? []), [queue]);
 
-  // Optimistic drops: show the result immediately; server truth replaces it on refetch.
-  const [pending, setPending] = useState<{
-    copies: QueueEntry[];
-    moves: Record<string, string | null>;
-  }>({ copies: [], moves: {} });
+  // Optimistic drops/removals: show the result immediately; server truth replaces it on
+  // refetch (and errors roll it back).
+  const NO_PENDING = { copies: [] as QueueEntry[], moves: {} as Record<string, string | null>, removed: [] as string[] };
+  const [pending, setPending] = useState(NO_PENDING);
   useEffect(() => {
-    setPending({ copies: [], moves: {} });
+    setPending(NO_PENDING);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue]);
 
   const effectiveUpcoming = useMemo(() => {
-    const base = (queue?.upcoming ?? []).map((e) =>
-      pending.moves[e.id] !== undefined ? { ...e, date: pending.moves[e.id]! } : e,
+    const base = (queue?.upcoming ?? [])
+      .filter((e) => !pending.removed.includes(e.id))
+      .map((e) => (pending.moves[e.id] !== undefined ? { ...e, date: pending.moves[e.id]! } : e));
+    const dated = base.filter((e) => e.date != null);
+    // Drop optimistic copies once the real entry has arrived (avoids a one-frame duplicate
+    // between the refetch landing and the pending-reset effect running).
+    const real = new Set(dated.map((e) => `${e.recipe.id}|${keyOf(e.date!)}|${e.slot}`));
+    const copies = pending.copies.filter(
+      (c) => !real.has(`${c.recipe.id}|${keyOf(c.date!)}|${c.slot}`),
     );
-    return [...base.filter((e) => e.date != null), ...pending.copies];
+    return [...dated, ...copies];
   }, [queue, pending]);
   const shelfEntries = useMemo(
     () => [
-      ...(queue?.unassigned ?? []),
+      ...(queue?.unassigned ?? []).filter((e) => !pending.removed.includes(e.id)),
       ...(queue?.upcoming ?? []).filter((e) => pending.moves[e.id] === null),
     ],
     [queue, pending],
@@ -388,10 +395,16 @@ export function Plan() {
   }
 
   async function remove(e: QueueEntry) {
-    await run(async () => {
+    // Optimistic: the tile disappears immediately; rolled back if the server refuses.
+    setMsg(undefined);
+    setPending((p) => ({ ...p, removed: [...p.removed, e.id] }));
+    try {
       await api.del(`/meal-plans/${e.mealPlanId}/entries/${e.id}`);
       refresh();
-    });
+    } catch (err) {
+      setPending((p) => ({ ...p, removed: p.removed.filter((id) => id !== e.id) }));
+      setMsg(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function setServings(e: QueueEntry, servings: number) {
@@ -484,7 +497,7 @@ export function Plan() {
       )}
 
       {msg && <p className="notice">{msg}</p>}
-      {loading && <p className="muted">Loading…</p>}
+      {loading && !queue && <p className="muted">Loading…</p>}
       {error && <p className="error">{error}</p>}
 
       {rules && rules.length > 0 && (
