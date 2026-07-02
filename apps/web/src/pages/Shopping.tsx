@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { OptimizationResult } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
@@ -18,6 +18,76 @@ interface ListDetail extends ListRow {
     estimatedPrice?: string | null;
     canonicalItem: { name: string };
   }[];
+}
+
+interface Coupon {
+  id: string;
+  description: string;
+  brand?: string | null;
+  valueText?: string | null;
+  matchedItemName?: string | null;
+  expiresAt?: string | null;
+}
+
+/** Digital-coupon approvals: the clip script only clips what's approved here. */
+function CouponsPanel() {
+  const [coupons, setCoupons] = useState<Coupon[]>();
+  const [msg, setMsg] = useState<string>();
+
+  async function load() {
+    setCoupons(await api.get<Coupon[]>('/integrations/kroger/coupons'));
+  }
+  useEffect(() => {
+    load().catch(() => setCoupons([]));
+  }, []);
+
+  async function act(id: string, action: 'approve' | 'dismiss') {
+    setCoupons((cs) => cs?.filter((c) => c.id !== id));
+    await api.post(`/integrations/kroger/coupons/${id}/${action}`);
+  }
+
+  async function approveMatched() {
+    const res = await api.post<{ approved: number }>('/integrations/kroger/coupons/approve-matched');
+    setMsg(`${res.approved} matched coupon(s) approved — run the clip script to clip them.`);
+    await load();
+  }
+
+  if (!coupons || coupons.length === 0) return null;
+  const matchedFirst = [...coupons].sort((a, b) =>
+    a.matchedItemName === b.matchedItemName ? 0 : a.matchedItemName ? -1 : 1,
+  );
+  return (
+    <div className="card coupons-card">
+      <div className="page-head">
+        <div className="card-title">💸 Fry's digital coupons ({coupons.length})</div>
+        <button className="btn-link" onClick={approveMatched}>
+          approve all matched
+        </button>
+      </div>
+      {msg && <p className="notice">{msg}</p>}
+      <ul className="plan-entries">
+        {matchedFirst.slice(0, 30).map((c) => (
+          <li key={c.id}>
+            <span className="plan-recipe">
+              {c.matchedItemName && <span className="badge badge-ok">{c.matchedItemName}</span>}{' '}
+              {c.valueText && <strong>{c.valueText} </strong>}
+              {c.brand ? `${c.brand} — ` : ''}
+              {c.description}
+            </span>
+            <button className="btn-link" onClick={() => act(c.id, 'approve')}>
+              ✓
+            </button>
+            <button className="entry-x" onClick={() => act(c.id, 'dismiss')}>
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="muted sheet-hint">
+        Approving stages a coupon; clipping happens when the clip script runs (see docs/ordering.md).
+      </p>
+    </div>
+  );
 }
 
 export function Shopping() {
@@ -46,6 +116,7 @@ export function Shopping() {
   return (
     <section className="page">
       <h2>Shopping</h2>
+      {!selected && <CouponsPanel />}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="error">{error}</p>}
 

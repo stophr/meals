@@ -69,3 +69,26 @@ Rate limits: 10K product calls/day — far more than a household needs.
   scopes. Certification is for OAuth/integration testing only — register a **Production**
   environment app (separate credentials) for real per-store prices, and set
   `KROGER_API_BASE="https://api.kroger.com/v1"` (the default).
+
+## Fry's digital coupons (approval-gated clipping)
+
+Kroger's web properties reject non-browser TLS outright (Akamai) — verified: connections
+drop in ~0.14s even for the homepage. So coupon work runs a real Chromium **on the host**
+via Playwright (the same approach as every working community clipper):
+
+```bash
+pnpm --filter @meals/api exec playwright install chromium     # once
+pnpm --filter @meals/api exec tsx src/scripts/kroger-coupons.ts --login   # once: sign in yourself
+pnpm --filter @meals/api exec tsx src/scripts/kroger-coupons.ts           # fetch -> proposals
+#   -> approve/dismiss in the app (Shop tab -> "Fry's digital coupons")
+pnpm --filter @meals/api exec tsx src/scripts/kroger-coupons.ts --clip-approved
+```
+
+- Coupons match to your items UPC-first (against synced Fry's products), fuzzy vs list names
+  second. "Approve all matched" bulk-stages the useful ones — mindful of Kroger's ~150
+  clipped-coupon account cap, nothing clips without approval.
+- After clipping, matched coupons write coupon-adjusted PriceObservations
+  (dealType=digital-coupon, valid until coupon expiry) so the optimizer sees true costs.
+- The internal endpoints are unofficial and move occasionally; the script tries known
+  variants and tells you how to add a new one if they all miss. Session state lives in
+  storage/kroger-web-state.json (gitignored).

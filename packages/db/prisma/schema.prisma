@@ -106,6 +106,7 @@ model Household {
   shoppingLists  ShoppingList[]
   jobs           IngestionJob[]
   integrationTokens IntegrationToken[]
+  krogerCoupons  KrogerCoupon[]
 }
 
 // Row exists now so FKs are stable; auth is deferred to Phase 3.
@@ -186,6 +187,31 @@ model Provider {
   aliases  ProductAlias[]
 
   @@index([householdId])
+}
+
+// Digital coupons fetched from the user's Fry's/Kroger account (via the host-side
+// Playwright script). Clipping is approval-gated: proposed -> approved (user) -> clipped.
+model KrogerCoupon {
+  id          String    @id // Kroger coupon id
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  description String
+  brand       String?
+  valueText   String? // "Save $1.00", "2 for $5"…
+  value       Decimal?  @db.Decimal(10, 2) // parsed $ off when determinable
+  expiresAt   DateTime?
+  upcs        String[]  @default([])
+
+  // Match against our catalog (UPC-first vs synced Fry's products).
+  matchedProductId String?
+  matchedItemName  String?
+
+  status    String    @default("proposed") // proposed | approved | clipped | dismissed | failed
+  fetchedAt DateTime  @default(now())
+  clippedAt DateTime?
+
+  @@index([householdId, status])
 }
 
 // OAuth tokens for store integrations (e.g. the Kroger user token that authorizes cart

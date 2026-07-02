@@ -179,6 +179,43 @@ export async function integrationRoutes(app: FastifyInstance) {
     return { pushed: push.length, items: push };
   });
 
+  // ---- Fry's digital coupons (fetched by the host-side Playwright script; clipping is
+  // approval-gated: the script only clips status=approved) ----
+  app.get('/integrations/kroger/coupons', async (req) => {
+    const household = await getHousehold();
+    const { status } = req.query as { status?: string };
+    const now = new Date();
+    return prisma.krogerCoupon.findMany({
+      where: {
+        householdId: household.id,
+        status: status ?? 'proposed',
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
+      orderBy: [{ matchedItemName: { sort: 'asc', nulls: 'last' } }, { value: { sort: 'desc', nulls: 'last' } }],
+      take: 300,
+    });
+  });
+
+  app.post('/integrations/kroger/coupons/:id/approve', async (req) => {
+    const { id } = req.params as { id: string };
+    return prisma.krogerCoupon.update({ where: { id }, data: { status: 'approved' } });
+  });
+
+  app.post('/integrations/kroger/coupons/:id/dismiss', async (req) => {
+    const { id } = req.params as { id: string };
+    return prisma.krogerCoupon.update({ where: { id }, data: { status: 'dismissed' } });
+  });
+
+  // Bulk-approve everything matched to the household's items (still requires the clip run).
+  app.post('/integrations/kroger/coupons/approve-matched', async () => {
+    const household = await getHousehold();
+    const res = await prisma.krogerCoupon.updateMany({
+      where: { householdId: household.id, status: 'proposed', matchedItemName: { not: null } },
+      data: { status: 'approved' },
+    });
+    return { approved: res.count };
+  });
+
   // ---- Walmart / Safeway assisted cart links (no middleman, first-party prices) ----
   app.get('/shopping-lists/:id/cart-links', async (req) => {
     const { id } = req.params as { id: string };
