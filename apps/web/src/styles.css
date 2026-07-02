@@ -686,6 +686,11 @@ select.chip {
   font-size: 1rem;
   text-align: center;
 }
+.sheet-input-wide {
+  width: 100%;
+  flex: 1 1 100%;
+  text-align: left;
+}
 .pantry-list {
   margin-bottom: 14px;
 }

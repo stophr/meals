@@ -9,11 +9,11 @@ import {
   discoverIngestSchema,
   cookRecipeSchema,
 } from '@meals/shared';
-import { toBaseQuantity } from '@meals/core';
+import { toBaseQuantity, dimensionOf } from '@meals/core';
 import { importRecipeFromUrl, searchMeals, getMeal } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { recipeCoverage } from '../lib/coverage.js';
-import { pantryTotals, consumeFromInventory } from '../lib/inventory.js';
+import { pantryByItemDim, consumeFromInventory } from '../lib/inventory.js';
 import { ingestRecipe } from '../lib/recipeIngest.js';
 import {
   loadItemPrices,
@@ -95,7 +95,7 @@ export async function recipeRoutes(app: FastifyInstance) {
               : [{ name: 'asc' }];
 
     const [pantry, prices] = await Promise.all([
-      pantryTotals(household.id),
+      pantryByItemDim(household.id),
       loadItemPrices(household.id),
     ]);
     const withCost = <T extends { ingredients: CostIngredient[]; servings: number }>(r: T) => {
@@ -242,7 +242,8 @@ export async function recipeRoutes(app: FastifyInstance) {
     for (const ing of recipe.ingredients) {
       if (ing.optional || !ing.canonicalItemId || ing.baseQuantity == null) continue;
       const needed = Number(ing.baseQuantity) * ratio;
-      const result = await consumeFromInventory(household.id, ing.canonicalItemId, needed);
+      const dim = ing.unit ? dimensionOf(ing.unit) : 'COUNT';
+      const result = await consumeFromInventory(household.id, ing.canonicalItemId, needed, dim);
       const name = ing.canonicalItem?.name ?? ing.freeText ?? 'item';
       consumed.push({ name, consumedBase: needed - result.shortfallBase });
       if (result.shortfallBase > 0) shortfalls.push({ name, shortfallBase: result.shortfallBase });
@@ -264,7 +265,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       include: { ingredients: { include: { canonicalItem: true } } },
     });
     const [pantry, prices] = await Promise.all([
-      pantryTotals(household.id),
+      pantryByItemDim(household.id),
       loadItemPrices(household.id),
     ]);
     const coverage = recipeCoverage(recipe.ingredients, pantry);

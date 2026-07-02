@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '@meals/db';
 import { inventoryCreateSchema, inventoryUpdateSchema, inventoryConsumeSchema } from '@meals/shared';
-import { toBaseQuantity } from '@meals/core';
+import { toBaseQuantity, dimensionOf } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { consumeFromInventory } from '../lib/inventory.js';
 
@@ -37,10 +37,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const data = inventoryUpdateSchema.parse(req.body);
     const patch: Record<string, unknown> = { ...data };
-    if (data.quantity !== undefined) {
-      patch.quantity = data.quantity.toString();
+    // Recompute the normalized base quantity whenever the amount OR the unit changes —
+    // switching "50 each" to "50 lb" must re-derive baseQuantity, not keep the old count.
+    if (data.quantity !== undefined || data.unit !== undefined) {
       const existing = await prisma.inventoryLot.findUniqueOrThrow({ where: { id } });
-      patch.baseQuantity = toBaseQuantity(data.quantity, data.unit ?? existing.unit).baseQuantity.toString();
+      const qty = data.quantity ?? Number(existing.quantity);
+      const unit = data.unit ?? existing.unit;
+      patch.quantity = qty.toString();
+      patch.baseQuantity = toBaseQuantity(qty, unit).baseQuantity.toString();
     }
     return prisma.inventoryLot.update({ where: { id }, data: patch });
   });
@@ -56,6 +60,11 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const data = inventoryConsumeSchema.parse(req.body);
     const household = await getHousehold();
     const base = toBaseQuantity(data.quantity, data.unit).baseQuantity;
-    return consumeFromInventory(household.id, data.canonicalItemId, base);
+    return consumeFromInventory(
+      household.id,
+      data.canonicalItemId,
+      base,
+      dimensionOf(data.unit),
+    );
   });
 }

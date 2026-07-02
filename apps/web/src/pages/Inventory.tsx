@@ -1,7 +1,40 @@
 import { useEffect, useMemo, useState } from 'react';
-import { UNITS } from '@meals/shared';
+import { UNITS, UNIT_TABLE } from '@meals/shared';
+import type { UnitDimension } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
+
+// Units grouped by what they measure, so stocking "Sugar" nudges toward weight/volume
+// instead of a bare count — a count can't be deducted against a recipe's "300 g sugar".
+const UNIT_GROUPS: { label: string; dim: UnitDimension }[] = [
+  { label: 'Weight', dim: 'MASS' },
+  { label: 'Volume', dim: 'VOLUME' },
+  { label: 'Count', dim: 'COUNT' },
+];
+
+function UnitSelect({
+  value,
+  onChange,
+  className = 'chip',
+}: {
+  value: string;
+  onChange: (u: string) => void;
+  className?: string;
+}) {
+  return (
+    <select className={className} value={value} onChange={(e) => onChange(e.target.value)}>
+      {UNIT_GROUPS.map((g) => (
+        <optgroup key={g.dim} label={g.label}>
+          {UNITS.filter((u) => UNIT_TABLE[u].dimension === g.dim).map((u) => (
+            <option key={u} value={u}>
+              {u.toLowerCase()}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
 
 interface Lot {
   id: string;
@@ -46,19 +79,31 @@ function expiryBadge(expiresAt?: string | null) {
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
-/** Bottom sheet to set an exact amount + unit for one pantry lot. */
-function AmountSheet({
+export interface LotPatch {
+  quantity: number;
+  unit: string;
+  location?: string;
+  expiresAt?: string;
+}
+
+/** Bottom sheet to edit every attribute of one pantry lot: amount, unit, location, expiry. */
+function LotSheet({
   lot,
   onSave,
   onClose,
 }: {
   lot: Lot;
-  onSave: (quantity: number, unit: string) => void;
+  onSave: (patch: LotPatch) => void;
   onClose: () => void;
 }) {
   const [qty, setQty] = useState(Number(lot.quantity));
   const [unit, setUnit] = useState(lot.unit);
+  const [location, setLocation] = useState(lot.location ?? '');
+  const [expires, setExpires] = useState(lot.expiresAt ? lot.expiresAt.slice(0, 10) : '');
   const step = ['G', 'ML'].includes(unit) ? 50 : ['KG', 'L', 'LB'].includes(unit) ? 0.5 : 1;
+  const dim = UNIT_TABLE[unit as keyof typeof UNIT_TABLE]?.dimension;
+  const dimLabel = dim === 'MASS' ? 'by weight' : dim === 'VOLUME' ? 'by volume' : 'by count';
+
   return (
     <div className="sheet">
       <div className="sheet-title">{lot.canonicalItem.name}</div>
@@ -77,16 +122,39 @@ function AmountSheet({
         <button className="chip" onClick={() => setQty(+(qty + step).toFixed(2))}>
           +
         </button>
-        <select className="chip" value={unit} onChange={(e) => setUnit(e.target.value)}>
-          {UNITS.map((u) => (
-            <option key={u} value={u}>
-              {u.toLowerCase()}
-            </option>
-          ))}
-        </select>
+        <UnitSelect value={unit} onChange={setUnit} />
+        <span className="muted">{dimLabel}</span>
+      </div>
+      <div className="sheet-row">
+        <input
+          className="sheet-input sheet-input-wide"
+          placeholder="location (Pantry, Fridge, Freezer…)"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+        />
+      </div>
+      <div className="sheet-row">
+        <label className="muted">expires</label>
+        <input
+          className="sheet-input"
+          type="date"
+          value={expires}
+          onChange={(e) => setExpires(e.target.value)}
+        />
+      </div>
+      <div className="sheet-row">
         <button
           className="chip active"
-          onClick={() => (qty > 0 ? onSave(qty, unit) : undefined)}
+          onClick={() =>
+            qty > 0
+              ? onSave({
+                  quantity: qty,
+                  unit,
+                  location: location.trim() || undefined,
+                  expiresAt: expires || undefined,
+                })
+              : undefined
+          }
           disabled={qty <= 0}
         >
           save
@@ -194,11 +262,11 @@ export function Inventory() {
     }
   }
 
-  async function saveAmount(lot: Lot, quantity: number, unit: string) {
+  async function saveLot(lot: Lot, patch: LotPatch) {
     setMsg(undefined);
     setEditing(undefined);
     try {
-      await api.patch(`/inventory/${lot.id}`, { quantity, unit });
+      await api.patch(`/inventory/${lot.id}`, patch);
       refresh();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -246,13 +314,7 @@ export function Inventory() {
               value={addQty}
               onChange={(e) => setAddQty(Number(e.target.value))}
             />
-            <select className="chip" value={addUnit} onChange={(e) => setAddUnit(e.target.value)}>
-              {UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {u.toLowerCase()}
-                </option>
-              ))}
-            </select>
+            <UnitSelect value={addUnit} onChange={setAddUnit} />
             <button className="btn btn-inline" onClick={addLot} disabled={addQty <= 0}>
               Add
             </button>
@@ -276,6 +338,7 @@ export function Inventory() {
             {catLots.map((lot) => (
               <li key={lot.id}>
                 <span className="plan-recipe">{lot.canonicalItem.name}</span>
+                {lot.location && <span className="muted"> · {lot.location}</span>}
                 {expiryBadge(lot.expiresAt)}
                 <button
                   className="tile-servings"
@@ -294,9 +357,9 @@ export function Inventory() {
       ))}
 
       {editing && (
-        <AmountSheet
+        <LotSheet
           lot={editing}
-          onSave={(q, u) => saveAmount(editing, q, u)}
+          onSave={(patch) => saveLot(editing, patch)}
           onClose={() => setEditing(undefined)}
         />
       )}

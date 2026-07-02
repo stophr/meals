@@ -1,5 +1,8 @@
 import { prisma, Unit } from '@meals/db';
 import type { Prisma } from '@meals/db';
+import { dimensionOf } from '@meals/core';
+import { BASE_UNIT } from '@meals/shared';
+import { pantryByItemDim } from './inventory.js';
 
 // Shared shopping-list builder: aggregate ingredients across meal entries (scaled by
 // servings), subtract pantry stock, materialize a ShoppingList. Used by both the legacy
@@ -23,33 +26,33 @@ export async function buildShoppingList(
   entries: EntryForBuild[],
   opts: BuildOptions,
 ) {
-  // canonicalItemId -> needed base quantity
-  const needed = new Map<string, { base: number; unit: Unit }>();
+  // Aggregate needs per (canonical item, measurement dimension). The base quantity was
+  // computed from the RECIPE's unit, so the dimension must be that unit's — never the item's
+  // nominal baseUnit — or grams-of-need would be compared against millilitres.
+  const needed = new Map<string, { itemId: string; base: number; unit: Unit }>();
   for (const entry of entries) {
     const servings = entry.recipe.servings || 1;
     const ratio = entry.servingsPlanned / servings;
     for (const ing of entry.recipe.ingredients) {
       if (!ing.canonicalItemId || ing.baseQuantity == null || ing.optional) continue;
+      const dim = ing.unit ? dimensionOf(ing.unit) : 'COUNT';
+      const key = `${ing.canonicalItemId}:${dim}`;
       const add = Number(ing.baseQuantity) * ratio;
-      const prev = needed.get(ing.canonicalItemId);
-      const unit = ing.canonicalItem?.baseUnit ?? ing.unit;
+      const prev = needed.get(key);
       if (prev) prev.base += add;
-      else needed.set(ing.canonicalItemId, { base: add, unit });
+      else needed.set(key, { itemId: ing.canonicalItemId, base: add, unit: BASE_UNIT[dim] });
     }
   }
 
-  // Subtract what the pantry already has.
-  const inventory = await prisma.inventoryLot.groupBy({
-    by: ['canonicalItemId'],
-    where: { householdId, canonicalItemId: { in: [...needed.keys()] } },
-    _sum: { baseQuantity: true },
-  });
-  for (const row of inventory) {
-    const entry = needed.get(row.canonicalItemId);
-    if (entry && row._sum.baseQuantity) entry.base -= Number(row._sum.baseQuantity);
+  // Subtract pantry stock — only same-dimension lots (weight covers weight, etc.).
+  const pantry = await pantryByItemDim(householdId);
+  for (const [key, v] of needed) {
+    const dim = dimensionOf(v.unit);
+    v.base -= pantry.get(v.itemId)?.get(dim) ?? 0;
+    needed.set(key, v);
   }
 
-  const items = [...needed.entries()].filter(([, v]) => v.base > 0.0001);
+  const items = [...needed.values()].filter((v) => v.base > 0.0001);
 
   return prisma.shoppingList.create({
     data: {
@@ -59,8 +62,8 @@ export async function buildShoppingList(
       coverageStart: opts.coverageStart,
       coverageEnd: opts.coverageEnd,
       items: {
-        create: items.map(([canonicalItemId, v]) => ({
-          canonicalItemId,
+        create: items.map((v) => ({
+          canonicalItemId: v.itemId,
           quantityNeeded: v.base.toString(),
           unit: v.unit,
           baseQuantityNeeded: v.base.toString(),

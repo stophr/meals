@@ -1,23 +1,33 @@
-import type { RecipeCoverage } from '@meals/shared';
+import type { RecipeCoverage, UnitDimension } from '@meals/shared';
+import { dimensionOf } from '@meals/core';
+import type { Unit } from '@meals/db';
 
 // "Cook from pantry" math: for each recipe, check which linked ingredients the current
 // inventory fully covers. Free-text (unlinked) ingredients can't be verified — surfaced as
 // unlinkedCount so the UI can show "N unverified" instead of pretending.
+//
+// DIMENSION-AWARE: a need measured by weight is only covered by weight stock, etc. Stocking
+// "50 each Sugar" never covers a recipe's "300 g sugar" — different measurement types.
 
 interface CoverageIngredient {
   canonicalItemId: string | null;
   baseQuantity: unknown; // Prisma Decimal | null
+  unit?: Unit | null;
   optional: boolean;
   freeText?: string | null;
   canonicalItem?: { name: string } | null;
 }
 
+function ingredientDimension(unit: Unit | null | undefined): UnitDimension {
+  return unit ? dimensionOf(unit) : 'COUNT'; // bare counts ("3 eggs") are COUNT
+}
+
 export function recipeCoverage(
   ingredients: CoverageIngredient[],
-  pantry: Map<string, number>,
+  pantry: Map<string, Map<UnitDimension, number>>,
 ): RecipeCoverage {
-  // Aggregate needs per item first (a recipe may use the same item twice).
-  const needs = new Map<string, { name: string; needed: number }>();
+  // Aggregate needs per (item, dimension) — a recipe may use the same item twice.
+  const needs = new Map<string, { itemId: string; name: string; dim: UnitDimension; needed: number }>();
   let unlinkedCount = 0;
 
   for (const ing of ingredients) {
@@ -26,17 +36,25 @@ export function recipeCoverage(
       unlinkedCount++;
       continue;
     }
-    const prev = needs.get(ing.canonicalItemId);
+    const dim = ingredientDimension(ing.unit);
+    const key = `${ing.canonicalItemId}:${dim}`;
+    const prev = needs.get(key);
     const add = Number(ing.baseQuantity);
     if (prev) prev.needed += add;
-    else needs.set(ing.canonicalItemId, { name: ing.canonicalItem?.name ?? 'item', needed: add });
+    else
+      needs.set(key, {
+        itemId: ing.canonicalItemId,
+        name: ing.canonicalItem?.name ?? 'item',
+        dim,
+        needed: add,
+      });
   }
 
   const missing: RecipeCoverage['missing'] = [];
   const satisfiedItemIds: string[] = [];
-  for (const [itemId, n] of needs) {
-    const have = pantry.get(itemId) ?? 0;
-    if (have >= n.needed) satisfiedItemIds.push(itemId);
+  for (const n of needs.values()) {
+    const have = pantry.get(n.itemId)?.get(n.dim) ?? 0;
+    if (have >= n.needed) satisfiedItemIds.push(n.itemId);
     else missing.push({ name: n.name, neededBase: n.needed, haveBase: have });
   }
 
