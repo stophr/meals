@@ -100,11 +100,20 @@ export function Recipes() {
   const [repeatDay, setRepeatDay] = useState(2);
   const [repeatDom, setRepeatDom] = useState(15);
 
-  async function addToPlan(r: RecipeRow) {
-    const res = await api.post<{ planName?: string | null }>('/meal-plans/stage', {
-      recipeId: r.id,
-    });
-    setNotice(`Staged in "${res.planName ?? 'current plan'}" — assign days in the Plan tab.`);
+  // Staged = this recipe has an unassigned (template) entry in the queue. The button is a
+  // toggle: stage on first tap, un-stage on the second.
+  const [staged, setStaged] = useState<{ entryId: string; planId: string }>();
+
+  async function toggleStage(r: RecipeRow) {
+    if (staged) {
+      await api.del(`/meal-plans/${staged.planId}/entries/${staged.entryId}`);
+      setStaged(undefined);
+    } else {
+      const res = await api.post<{ planId: string; entry: { id: string } }>('/meal-plans/stage', {
+        recipeId: r.id,
+      });
+      setStaged({ entryId: res.entry.id, planId: res.planId });
+    }
   }
 
   async function saveRepeat(r: RecipeRow) {
@@ -156,7 +165,17 @@ export function Recipes() {
   }
 
   async function openDetail(id: string) {
-    setDetail(await api.get<RecipeRow>(`/recipes/${id}`));
+    setStaged(undefined);
+    setNotice(undefined);
+    const [recipe, queue] = await Promise.all([
+      api.get<RecipeRow>(`/recipes/${id}`),
+      api
+        .get<{ unassigned: { id: string; mealPlanId: string; recipe: { id: string } }[] }>('/queue')
+        .catch(() => ({ unassigned: [] })),
+    ]);
+    const existing = queue.unassigned.find((e) => e.recipe.id === id);
+    if (existing) setStaged({ entryId: existing.id, planId: existing.mealPlanId });
+    setDetail(recipe);
   }
 
   async function cook(r: RecipeRow) {
@@ -250,8 +269,11 @@ export function Recipes() {
           <button className="btn" disabled={busyId === detail.id} onClick={() => cook(detail)}>
             {busyId === detail.id ? 'Cooking…' : '🍳 Cook this'}
           </button>
-          <button className="btn btn-alt" onClick={() => addToPlan(detail)}>
-            ➕ Plan
+          <button
+            className={staged ? 'btn' : 'btn btn-alt'}
+            onClick={() => toggleStage(detail)}
+          >
+            {staged ? '✓ Staged' : '➕ Plan'}
           </button>
           <button className="btn btn-alt" onClick={() => setRepeatOpen(!repeatOpen)}>
             🔁 Repeat
