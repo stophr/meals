@@ -64,7 +64,8 @@ Rate limits: 10K product calls/day — far more than a household needs.
 - **Apps created in Kroger's NEW portal authenticate against `https://api-ce.kroger.com/v1`**,
   not the classic `api.kroger.com` (which returns 401 "invalid credentials"). Set
   `KROGER_API_BASE="https://api-ce.kroger.com/v1"` in `.env`.
-- **Each Kroger API must be added to your app individually** in the portal (Products,
-  Locations, Cart). An unentitled API does not 403 — the gateway hangs the request. If
-  Locations works but sync-prices reports "Products API is not responding", open your app in
-  the developer portal and enable the Products API (and Cart API for cart pushes).
+- **The Certification environment has no live product catalog.** Token + Locations work on
+  `api-ce`, but `/products` returns 504 "The upstream server is timing out" regardless of
+  scopes. Certification is for OAuth/integration testing only — register a **Production**
+  environment app (separate credentials) for real per-store prices, and set
+  `KROGER_API_BASE="https://api.kroger.com/v1"` (the default).

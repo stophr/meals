@@ -96,9 +96,10 @@ export async function syncPrices(
       result.unmatched.push(item.name);
       if (consecutiveFailures >= 3) {
         throw new Error(
-          'Kroger Products API is not responding for this app. In the Kroger developer portal, ' +
-            'open your application and make sure the PRODUCTS API is added/enabled (Locations works, ' +
-            `Products hangs). Last error: ${err instanceof Error ? err.message : err}`,
+          'Kroger Products API is not responding. If this app uses the Certification ' +
+            'environment (api-ce), note that cert has NO live product catalog (504s) — register ' +
+            'a Production app and set KROGER_API_BASE=https://api.kroger.com/v1. ' +
+            `Last error: ${err instanceof Error ? err.message : err}`,
         );
       }
       continue;
