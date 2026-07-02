@@ -79,6 +79,9 @@ export function parseIngredientLine(raw: string): ParsedIngredient {
   if (q) {
     quantity = Math.round(q[0] * 1000) / 1000;
     text = text.slice(q[1]).trim();
+    // Ranges ("1-2 cups", "1 to 2 cups"): keep the lower bound, drop the upper.
+    const range = text.match(/^(?:-|–|to)\s*\d+(?:\s+\d+\s*\/\s*\d+|\.\d+|\s*\/\s*\d+)?\s*/);
+    if (range) text = text.slice(range[0].length).trim();
   }
 
   let unit: Unit | null = null;

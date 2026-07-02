@@ -24,6 +24,9 @@ Port taken? Override in `.env`: `WEB_PORT=…`, `API_HOST_PORT=…`, `POSTGRES_H
 > Ollama must listen beyond loopback: `OLLAMA_HOST=0.0.0.0 ollama serve`.
 > See `docs/local-ocr.md` for model choices, vLLM, and tuning.
 
+**Want a massive recipe catalog?** Bulk-import ~275K star-rated Food.com recipes —
+see `docs/foodcom-import.md` (one download + one command, idempotent).
+
 ## Local development
 
 ```bash

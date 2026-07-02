@@ -15,6 +15,7 @@
     "@meals/db": "workspace:*",
     "@meals/ingestion": "workspace:*",
     "@meals/shared": "workspace:*",
+    "csv-parse": "^7.0.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.0",
     "tsx": "^4.19.2",

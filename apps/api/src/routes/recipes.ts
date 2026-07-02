@@ -71,9 +71,11 @@ export async function recipeRoutes(app: FastifyInstance) {
     const pantry = await pantryTotals(household.id);
 
     if (query.cookable) {
-      // Coverage is computed in JS, so pull the full filtered set (capped) and page after.
+      // Only recipes with at least one pantry-linked ingredient can be cookable, so restrict
+      // the candidate set in SQL first — keeps this exact even with a 250K+ imported catalog
+      // (bulk-imported recipes are unlinked until the canonical catalog grows).
       const all = await prisma.recipe.findMany({
-        where,
+        where: { ...where, ingredients: { some: { canonicalItemId: { not: null } } } },
         orderBy,
         include: ingredientInclude,
         take: 2000,
@@ -103,17 +105,34 @@ export async function recipeRoutes(app: FastifyInstance) {
     };
   });
 
-  // Facet values for filter UIs.
+  // Facet values for filter UIs. groupBy/unnest so this stays cheap at catalog scale.
   app.get('/recipes/meta', async () => {
     const household = await getHousehold();
-    const rows = await prisma.recipe.findMany({
-      where: { householdId: household.id },
-      select: { cuisine: true, category: true, tags: true },
-    });
-    const cuisines = [...new Set(rows.map((r) => r.cuisine).filter(Boolean))].sort();
-    const categories = [...new Set(rows.map((r) => r.category).filter(Boolean))].sort();
-    const tags = [...new Set(rows.flatMap((r) => r.tags))].sort();
-    return { cuisines, categories, tags };
+    const [cuisineRows, categoryRows, tagRows] = await Promise.all([
+      prisma.recipe.groupBy({
+        by: ['cuisine'],
+        where: { householdId: household.id, cuisine: { not: null } },
+        _count: true,
+      }),
+      prisma.recipe.groupBy({
+        by: ['category'],
+        where: { householdId: household.id, category: { not: null } },
+        _count: true,
+        orderBy: { _count: { category: 'desc' } },
+        take: 60,
+      }),
+      prisma.$queryRaw<{ tag: string }[]>`
+        SELECT tag FROM (
+          SELECT unnest(tags) AS tag, count(*) AS n
+          FROM "Recipe" WHERE "householdId" = ${household.id}
+          GROUP BY 1 ORDER BY n DESC LIMIT 100
+        ) t ORDER BY tag`,
+    ]);
+    return {
+      cuisines: cuisineRows.map((r) => r.cuisine).sort(),
+      categories: categoryRows.map((r) => r.category).sort(),
+      tags: tagRows.map((r) => r.tag),
+    };
   });
 
   // ---- Backend recipe discovery (TheMealDB) ----

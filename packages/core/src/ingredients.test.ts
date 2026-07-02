@@ -44,6 +44,15 @@ describe('parseIngredientLine', () => {
   it('never returns an empty name', () => {
     expect(parseIngredientLine('Dash').name).toBe('Dash');
   });
+
+  it('takes the lower bound of ranges', () => {
+    expect(parseIngredientLine('1-2 cups sugar')).toMatchObject({
+      quantity: 1, unit: 'CUP', name: 'sugar',
+    });
+    expect(parseIngredientLine('2 to 3 tbsp oil')).toMatchObject({
+      quantity: 2, unit: 'TBSP', name: 'oil',
+    });
+  });
 });
 
 describe('complexityOf', () => {
