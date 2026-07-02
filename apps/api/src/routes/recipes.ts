@@ -54,6 +54,9 @@ export async function recipeRoutes(app: FastifyInstance) {
       ...(query.tag ? { tags: { has: query.tag } } : {}),
       ...(query.complexity ? { complexity: query.complexity } : {}),
       ...(query.favorite ? { isFavorite: true } : {}),
+      // "Cheapest" is only meaningful when most ingredients are priced — otherwise a recipe
+      // looks cheap simply because we haven't priced its ingredients yet.
+      ...(query.sort === 'cheapest' ? { costCoverage: { gte: 0.6 }, estCostPerServing: { not: null } } : {}),
       ...(query.q
         ? {
             OR: [

@@ -309,12 +309,14 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     }))
       pool.set(r.id, r);
 
-    // Budget mode: make sure the genuinely cheap mains are in the pool.
+    // Budget mode: pool the genuinely cheap mains — but only ones we've priced well enough
+    // to trust (>=60% of ingredients), so fake-cheap partially-priced recipes don't win.
     if (opts.budget) {
       for (const r of await prisma.recipe.findMany({
         where: {
           householdId: household.id,
           estCostPerServing: { not: null },
+          costCoverage: { gte: 0.6 },
           ...(isDinner ? { category: { not: null } } : {}),
         },
         orderBy: { estCostPerServing: 'asc' },
@@ -360,12 +362,13 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       if (opts.favoritesFirst && r.isFavorite) score += 2.5;
       if (opts.preferPantry) score += 3 * covFraction + (cov.cookable ? 1 : 0);
       if (opts.budget) {
-        // Real cost dominates: $2/serving beats $8/serving by ~3.6 points; promos add a nudge;
-        // unpriced recipes can't sneak into a budget week on vibes.
-        const cost = r.estCostPerServing != null ? Number(r.estCostPerServing) : null;
+        // Real cost dominates, but only trust it when the recipe is well-priced; partially
+        // priced (fake-cheap) and unpriced recipes are penalized so they can't sneak in.
+        const trusted = (r.costCoverage ?? 0) >= 0.6;
+        const cost = trusted && r.estCostPerServing != null ? Number(r.estCostPerServing) : null;
         if (cost != null) score += 6 * Math.max(0, 1 - cost / 10);
-        else score -= 2;
-        score += Math.min(1.5, (r.promoIngredients ?? 0) * 0.5);
+        else score -= 3;
+        if (trusted) score += Math.min(1.5, (r.promoIngredients ?? 0) * 0.5);
       }
       score += Math.random(); // jitter: regenerate -> different week
       return { r, score };
