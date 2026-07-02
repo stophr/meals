@@ -103,20 +103,21 @@ async function openContext(headed = false): Promise<{ ctx: BrowserContext; page:
 async function login() {
   mkdirSync('storage', { recursive: true });
   const { ctx, page } = await openContext(true);
-  console.log(`Opening ${HOST} — sign in with your Fry's account, then return here.`);
+  console.log(`Opening ${HOST}/signin …`);
   await page.goto(`${HOST}/signin`, { waitUntil: 'domcontentloaded' });
-  // Wait until an authenticated session cookie shows up (or 5 minutes).
-  const deadline = Date.now() + 300_000;
-  for (;;) {
-    if (Date.now() > deadline) throw new Error('Login timed out (5 min)');
-    const cookies = await ctx.cookies();
-    if (cookies.some((c) => /psec|auth|session/i.test(c.name) && c.value.length > 20)) break;
-    await page.waitForTimeout(2000);
-  }
-  await page.waitForTimeout(3000);
+  console.log('');
+  console.log('  1. Sign in with your Fry\'s account in the browser window');
+  console.log('  2. Wait until you are fully signed in (your name/account visible)');
+  console.log('  3. Come back to THIS terminal and press Enter — do NOT close the browser');
+  console.log('');
+  await new Promise<void>((resolve) => {
+    process.stdin.resume();
+    process.stdin.once('data', () => resolve());
+  });
   await ctx.storageState({ path: STATE_PATH });
-  console.log(`Session saved to ${STATE_PATH}. You can close the browser.`);
+  console.log(`Session saved to ${STATE_PATH}. Closing browser.`);
   await ctx.browser()?.close();
+  process.stdin.pause();
 }
 
 async function inPageJson(page: Page, path: string): Promise<unknown> {
