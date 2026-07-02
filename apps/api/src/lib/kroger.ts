@@ -80,29 +80,50 @@ export async function syncPrices(
   // API — fail fast after consecutive network failures instead of timing out per item.
   let consecutiveFailures = 0;
 
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
   for (const item of items) {
     result.itemsQueried++;
+    await sleep(350); // Kroger's edge gets flaky (slow 404s) on tight bursts — pace politely
     let products;
     try {
       products = await searchProducts(cfg, token, {
         term: item.name,
         locationId,
         limit: 6,
-        timeoutMs: 8000,
+        timeoutMs: 12000,
       });
       consecutiveFailures = 0;
     } catch (err) {
-      consecutiveFailures++;
-      result.unmatched.push(item.name);
-      if (consecutiveFailures >= 3) {
-        throw new Error(
-          'Kroger Products API is not responding. If this app uses the Certification ' +
-            'environment (api-ce), note that cert has NO live product catalog (504s) — register ' +
-            'a Production app and set KROGER_API_BASE=https://api.kroger.com/v1. ' +
-            `Last error: ${err instanceof Error ? err.message : err}`,
-        );
+      const msg = err instanceof Error ? err.message : String(err);
+      // HTTP 4xx = Kroger answered "no" for this term — count as unmatched, not a failure.
+      if (/HTTP 4\d\d/.test(msg)) {
+        result.unmatched.push(item.name);
+        continue;
       }
-      continue;
+      // Timeout / 5xx: retry once after a breather, then count toward the abort.
+      await sleep(1500);
+      try {
+        products = await searchProducts(cfg, token, {
+          term: item.name,
+          locationId,
+          limit: 6,
+          timeoutMs: 12000,
+        });
+        consecutiveFailures = 0;
+      } catch (err2) {
+        consecutiveFailures++;
+        result.unmatched.push(item.name);
+        if (consecutiveFailures >= 5) {
+          throw new Error(
+            'Kroger Products API is not responding. If this app uses the Certification ' +
+              'environment (api-ce), note that cert has NO live product catalog (504s) — register ' +
+              'a Production app and set KROGER_API_BASE=https://api.kroger.com/v1. ' +
+              `Last error: ${err2 instanceof Error ? err2.message : err2}`,
+          );
+        }
+        continue;
+      }
     }
     if (!products.length) {
       result.unmatched.push(item.name);

@@ -97,7 +97,14 @@ export type RecipeCreate = z.infer<typeof recipeCreateSchema>;
 export type RecipeIngredientInput = z.infer<typeof recipeIngredientInputSchema>;
 
 // ---- Recipe catalog: search / import / discover / favorite / cook ----
-export const recipeSortOptions = ['name', 'rating', 'popular', 'newest', 'complexity'] as const;
+export const recipeSortOptions = [
+  'name',
+  'rating',
+  'popular',
+  'newest',
+  'complexity',
+  'cheapest',
+] as const;
 export const recipeQuerySchema = z.object({
   q: z.string().optional(), // matches name, tags, and ingredient names
   cuisine: z.string().optional(),
@@ -125,6 +132,7 @@ export interface RecipeCoverage {
   missing: { name: string; neededBase: number; haveBase: number }[];
   unlinkedCount: number; // free-text ingredients we can't verify against the pantry
   cookable: boolean; // all linked ingredients satisfied (and at least one linked)
+  satisfiedItemIds?: string[]; // pantry-covered canonical item ids (drives cook-tonight cost)
 }
 
 // ---- Inventory ----
@@ -209,6 +217,7 @@ export const generateMealPlanSchema = z.object({
   slot: z.string().default('dinner'),
   preferPantry: z.boolean().default(true), // boost recipes coverable from inventory
   favoritesFirst: z.boolean().default(true),
+  budget: z.boolean().default(false), // weight real cost + promos heavily ("cheap week")
 });
 export type GenerateMealPlan = z.infer<typeof generateMealPlanSchema>;
 

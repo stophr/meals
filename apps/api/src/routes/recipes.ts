@@ -15,6 +15,27 @@ import { getHousehold } from '../lib/household.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { pantryTotals, consumeFromInventory } from '../lib/inventory.js';
 import { ingestRecipe } from '../lib/recipeIngest.js';
+import {
+  loadItemPrices,
+  costRecipe,
+  type ItemPrice,
+  type CostIngredient,
+} from '../lib/recipeCost.js';
+
+/** Cost of only the ingredients the pantry does NOT already cover ("cook tonight for $X"). */
+function cookTonightCost(
+  ingredients: CostIngredient[],
+  servings: number,
+  satisfied: Set<string>,
+  prices: Map<string, ItemPrice>,
+): number | null {
+  const toBuy = ingredients.filter(
+    (i) => !i.canonicalItemId || !satisfied.has(i.canonicalItemId),
+  );
+  if (!toBuy.some((i) => i.canonicalItemId)) return 0; // everything covered (or unpriceable)
+  const res = costRecipe(toBuy, servings, prices);
+  return res ? res.total : null;
+}
 
 const ingredientInclude = {
   ingredients: { include: { canonicalItem: { select: { name: true } } } },
@@ -54,7 +75,9 @@ export async function recipeRoutes(app: FastifyInstance) {
     };
 
     const orderBy: Prisma.RecipeOrderByWithRelationInput[] =
-      query.sort === 'rating'
+      query.sort === 'cheapest'
+        ? [{ estCostPerServing: { sort: 'asc', nulls: 'last' } }, { name: 'asc' }]
+        : query.sort === 'rating'
         ? [{ externalRating: { sort: 'desc', nulls: 'last' } }, { name: 'asc' }]
         : query.sort === 'popular'
           ? [
@@ -68,7 +91,23 @@ export async function recipeRoutes(app: FastifyInstance) {
               ? [{ complexity: 'asc' }, { name: 'asc' }]
               : [{ name: 'asc' }];
 
-    const pantry = await pantryTotals(household.id);
+    const [pantry, prices] = await Promise.all([
+      pantryTotals(household.id),
+      loadItemPrices(household.id),
+    ]);
+    const withCost = <T extends { ingredients: CostIngredient[]; servings: number }>(r: T) => {
+      const coverage = recipeCoverage(r.ingredients as never, pantry);
+      return {
+        ...r,
+        coverage,
+        cookTonightCost: cookTonightCost(
+          r.ingredients,
+          r.servings || 1,
+          new Set(coverage.satisfiedItemIds ?? []),
+          prices,
+        ),
+      };
+    };
 
     if (query.cookable) {
       // A recipe can only be fully cookable when every required ingredient is pantry-linked,
@@ -86,9 +125,7 @@ export async function recipeRoutes(app: FastifyInstance) {
         include: ingredientInclude,
         take: 2000,
       });
-      const cookable = all
-        .map((r) => ({ ...r, coverage: recipeCoverage(r.ingredients, pantry) }))
-        .filter((r) => r.coverage.cookable);
+      const cookable = all.map(withCost).filter((r) => r.coverage.cookable);
       return {
         items: cookable.slice(query.skip, query.skip + query.take),
         total: cookable.length,
@@ -105,10 +142,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       }),
       prisma.recipe.count({ where }),
     ]);
-    return {
-      items: items.map((r) => ({ ...r, coverage: recipeCoverage(r.ingredients, pantry) })),
-      total,
-    };
+    return { items: items.map(withCost), total };
   });
 
   // Facet values for filter UIs. groupBy/unnest so this stays cheap at catalog scale.
@@ -226,8 +260,21 @@ export async function recipeRoutes(app: FastifyInstance) {
       where: { id },
       include: { ingredients: { include: { canonicalItem: true } } },
     });
-    const pantry = await pantryTotals(household.id);
-    return { ...recipe, coverage: recipeCoverage(recipe.ingredients, pantry) };
+    const [pantry, prices] = await Promise.all([
+      pantryTotals(household.id),
+      loadItemPrices(household.id),
+    ]);
+    const coverage = recipeCoverage(recipe.ingredients, pantry);
+    return {
+      ...recipe,
+      coverage,
+      cookTonightCost: cookTonightCost(
+        recipe.ingredients,
+        recipe.servings || 1,
+        new Set(coverage.satisfiedItemIds ?? []),
+        prices,
+      ),
+    };
   });
 
   app.post('/recipes', async (req, reply) => {

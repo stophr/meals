@@ -18,6 +18,11 @@ interface RecipeRow {
   timesCooked: number;
   sourceName?: string | null;
   instructions?: string | null;
+  estCostPerServing?: string | null;
+  estCostTotal?: string | null;
+  costCoverage?: number | null;
+  promoIngredients?: number | null;
+  cookTonightCost?: number | null;
   ingredients: {
     id: string;
     freeText?: string | null;
@@ -51,6 +56,7 @@ const SORTS = [
   { v: 'popular', label: 'Popular' },
   { v: 'newest', label: 'Newest' },
   { v: 'complexity', label: 'Easiest' },
+  { v: 'cheapest', label: '💰 Cheapest' },
 ] as const;
 
 function Stars({ rating, count }: { rating?: number | null; count?: number | null }) {
@@ -258,6 +264,19 @@ export function Recipes() {
           {detail.prepMinutes ? ` · ${detail.prepMinutes} min` : ''} · serves {detail.servings}
           {detail.timesCooked > 0 && ` · cooked ×${detail.timesCooked}`}
         </div>
+        {detail.estCostTotal != null && (
+          <div className="cost-line">
+            💰 est. ${Number(detail.estCostTotal).toFixed(2)} total · $
+            {Number(detail.estCostPerServing).toFixed(2)}/serving
+            {detail.costCoverage != null && ` (${Math.round(detail.costCoverage * 100)}% of ingredients priced)`}
+            {(detail.promoIngredients ?? 0) > 0 && ` · ${detail.promoIngredients} on promo 🔥`}
+            {detail.cookTonightCost != null && detail.cookTonightCost < Number(detail.estCostTotal) && (
+              <div className="cost-tonight">
+                🧺 cook tonight for ~${detail.cookTonightCost.toFixed(2)} (pantry covers the rest)
+              </div>
+            )}
+          </div>
+        )}
         <div className="detail-badges">
           <CoverageBadge c={c} />
           {c.unlinkedCount > 0 && (
@@ -474,6 +493,12 @@ export function Recipes() {
               <div className="card-title">{r.name}</div>
               <div className="card-sub">
                 <Stars rating={r.externalRating} count={r.externalRatingCount} />
+                {r.estCostPerServing != null && (
+                  <span className="cost-badge">
+                    ${Number(r.estCostPerServing).toFixed(2)}/serv
+                    {(r.promoIngredients ?? 0) > 0 && ' 🔥'}
+                  </span>
+                )}
                 {r.cuisine && ` ${r.cuisine}`}
                 {r.complexity && ` · ${r.complexity.toLowerCase()}`}
                 {r.prepMinutes ? ` · ${r.prepMinutes}m` : ''}

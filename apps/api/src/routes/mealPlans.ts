@@ -309,6 +309,22 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     }))
       pool.set(r.id, r);
 
+    // Budget mode: make sure the genuinely cheap mains are in the pool.
+    if (opts.budget) {
+      for (const r of await prisma.recipe.findMany({
+        where: {
+          householdId: household.id,
+          estCostPerServing: { not: null },
+          ...(isDinner ? { category: { not: null } } : {}),
+        },
+        orderBy: { estCostPerServing: 'asc' },
+        include,
+        take: 300,
+      })) {
+        if (categoryOk(r.category)) pool.set(r.id, r);
+      }
+    }
+
     // Recipes fully covered by the pantry (the cook-from-pantry set).
     if (opts.preferPantry) {
       for (const r of await prisma.recipe.findMany({
@@ -343,6 +359,14 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       let score = (r.externalRating ?? 3) * confidence;
       if (opts.favoritesFirst && r.isFavorite) score += 2.5;
       if (opts.preferPantry) score += 3 * covFraction + (cov.cookable ? 1 : 0);
+      if (opts.budget) {
+        // Real cost dominates: $2/serving beats $8/serving by ~3.6 points; promos add a nudge;
+        // unpriced recipes can't sneak into a budget week on vibes.
+        const cost = r.estCostPerServing != null ? Number(r.estCostPerServing) : null;
+        if (cost != null) score += 6 * Math.max(0, 1 - cost / 10);
+        else score -= 2;
+        score += Math.min(1.5, (r.promoIngredients ?? 0) * 0.5);
+      }
       score += Math.random(); // jitter: regenerate -> different week
       return { r, score };
     });

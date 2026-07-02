@@ -344,6 +344,14 @@ model Recipe {
   timesCooked         Int       @default(0)
   lastCookedAt        DateTime?
 
+  // Denormalized cost estimate from real store prices (recompute-costs script).
+  // Proportional costing: amount used ÷ pack size × pack price, promo-aware.
+  estCostTotal      Decimal?  @db.Decimal(10, 2)
+  estCostPerServing Decimal?  @db.Decimal(10, 2)
+  costCoverage      Float? // fraction of required ingredients that were priceable (0..1)
+  promoIngredients  Int? // how many priced ingredients are currently on promo
+  costUpdatedAt     DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -416,11 +416,18 @@ export function Plan() {
     });
   }
 
-  async function fillDays() {
+  async function fillDays(budget = false) {
     setBusy(true);
     await run(async () => {
-      const plan = await api.post<{ entries: unknown[] }>('/meal-plans/generate', { days: 7 });
-      setMsg(`Queued dinners — ${plan.entries.length} scheduled over the next 7 days.`);
+      const plan = await api.post<{ entries: unknown[] }>('/meal-plans/generate', {
+        days: 7,
+        budget,
+      });
+      setMsg(
+        budget
+          ? `Budget week queued — ${plan.entries.length} cheap dinners (real Fry's prices).`
+          : `Queued dinners — ${plan.entries.length} scheduled over the next 7 days.`,
+      );
       refresh();
     });
     setBusy(false);
@@ -456,9 +463,14 @@ export function Plan() {
     <section className="page">
       <div className="page-head">
         <h2>Meal queue</h2>
-        <button className="btn-link" disabled={busy} onClick={fillDays}>
-          ✨ Fill 7 days
-        </button>
+        <div>
+          <button className="btn-link" disabled={busy} onClick={() => fillDays(false)}>
+            ✨ Fill 7 days
+          </button>{' '}
+          <button className="btn-link" disabled={busy} onClick={() => fillDays(true)}>
+            💰 Budget week
+          </button>
+        </div>
       </div>
 
       <div className="slot-tabs">

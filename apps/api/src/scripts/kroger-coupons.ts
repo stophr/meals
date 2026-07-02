@@ -129,9 +129,11 @@ async function inPageJson(page: Page, path: string): Promise<unknown> {
 }
 
 async function fetchAndPropose() {
-  if (!existsSync(STATE_PATH)) throw new Error(`No session — run with --login first`);
+  // Coupon BROWSING needs no login — anonymous context works (login only gates clipping).
+  // If Akamai blocks headless, retry with --headed.
+  const headed = process.argv.includes('--headed');
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
-  const { ctx, page } = await openContext(false);
+  const { ctx, page } = await openContext(headed);
   await page.goto(`${HOST}/savings/cl/coupons`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(4000); // let the SPA authenticate its API session
 

@@ -33,18 +33,19 @@ export function recipeCoverage(
   }
 
   const missing: RecipeCoverage['missing'] = [];
-  let satisfied = 0;
+  const satisfiedItemIds: string[] = [];
   for (const [itemId, n] of needs) {
     const have = pantry.get(itemId) ?? 0;
-    if (have >= n.needed) satisfied++;
+    if (have >= n.needed) satisfiedItemIds.push(itemId);
     else missing.push({ name: n.name, neededBase: n.needed, haveBase: have });
   }
 
   return {
     requiredCount: needs.size,
-    satisfiedCount: satisfied,
+    satisfiedCount: satisfiedItemIds.length,
     missing,
     unlinkedCount,
     cookable: needs.size > 0 && missing.length === 0,
+    satisfiedItemIds,
   };
 }
