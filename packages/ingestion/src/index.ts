@@ -4,4 +4,5 @@ export * from './recipes/types.js';
 export * from './recipes/jsonld.js';
 export * from './recipes/themealdb.js';
 export * from './recipes/foodcom.js';
+export * from './recipes/epicurious.js';
 export * from './llm/chat.js';

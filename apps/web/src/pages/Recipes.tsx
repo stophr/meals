@@ -95,6 +95,28 @@ export function Recipes() {
   const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>();
   const [busyId, setBusyId] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const [repeatKind, setRepeatKind] = useState('RANDOM_WEEKLY');
+  const [repeatDay, setRepeatDay] = useState(2);
+  const [repeatDom, setRepeatDom] = useState(15);
+
+  async function addToPlan(r: RecipeRow) {
+    const res = await api.post<{ planName?: string | null }>('/meal-plans/stage', {
+      recipeId: r.id,
+    });
+    setNotice(`Staged in "${res.planName ?? 'current plan'}" — assign days in the Plan tab.`);
+  }
+
+  async function saveRepeat(r: RecipeRow) {
+    await api.post('/meal-rules', {
+      recipeId: r.id,
+      kind: repeatKind,
+      ...(repeatKind === 'WEEKLY' ? { weekday: repeatDay } : {}),
+      ...(repeatKind === 'MONTHLY' ? { dayOfMonth: repeatDom } : {}),
+    });
+    setRepeatOpen(false);
+    setNotice('Repeat saved — it lands in generated plans and “Apply repeats”.');
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -224,9 +246,49 @@ export function Recipes() {
           )}
         </div>
         {notice && <p className="notice">{notice}</p>}
-        <button className="btn" disabled={busyId === detail.id} onClick={() => cook(detail)}>
-          {busyId === detail.id ? 'Cooking…' : '🍳 Cook this (uses pantry)'}
-        </button>
+        <div className="btn-row">
+          <button className="btn" disabled={busyId === detail.id} onClick={() => cook(detail)}>
+            {busyId === detail.id ? 'Cooking…' : '🍳 Cook this'}
+          </button>
+          <button className="btn btn-alt" onClick={() => addToPlan(detail)}>
+            ➕ Plan
+          </button>
+          <button className="btn btn-alt" onClick={() => setRepeatOpen(!repeatOpen)}>
+            🔁 Repeat
+          </button>
+        </div>
+        {repeatOpen && (
+          <div className="repeat-form">
+            <select value={repeatKind} onChange={(e) => setRepeatKind(e.target.value)}>
+              <option value="RANDOM_WEEKLY">Weekly, random day</option>
+              <option value="RANDOM_MONTHLY">Monthly, random day</option>
+              <option value="DAILY">Every day</option>
+              <option value="WEEKLY">Weekly on…</option>
+              <option value="MONTHLY">Monthly on day…</option>
+            </select>
+            {repeatKind === 'WEEKLY' && (
+              <select value={repeatDay} onChange={(e) => setRepeatDay(Number(e.target.value))}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => (
+                  <option key={d} value={i}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            )}
+            {repeatKind === 'MONTHLY' && (
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={repeatDom}
+                onChange={(e) => setRepeatDom(Number(e.target.value))}
+              />
+            )}
+            <button className="btn btn-inline" onClick={() => saveRepeat(detail)}>
+              Save repeat
+            </button>
+          </div>
+        )}
 
         <h3>Ingredients</h3>
         <ul className="ing-list">

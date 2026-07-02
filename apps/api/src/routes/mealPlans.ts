@@ -1,7 +1,39 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma, Unit } from '@meals/db';
-import { mealPlanCreateSchema, mealPlanEntryCreateSchema } from '@meals/shared';
+import type { Recipe, RecipeIngredient } from '@meals/db';
+import {
+  mealPlanCreateSchema,
+  mealPlanEntryCreateSchema,
+  generateMealPlanSchema,
+  stageRecipeSchema,
+  assignEntrySchema,
+  mealRuleCreateSchema,
+} from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
+import { pantryTotals } from '../lib/inventory.js';
+import { recipeCoverage } from '../lib/coverage.js';
+import { materializeRules, activeRules } from '../lib/mealRules.js';
+
+const DAY_MS = 86_400_000;
+
+/** Latest plan still covering today, or a fresh 4-week plan to stage into. */
+async function currentPlan(householdId: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const existing = await prisma.mealPlan.findFirst({
+    where: { householdId, endDate: { gte: today } },
+    orderBy: { startDate: 'desc' },
+  });
+  if (existing) return existing;
+  return prisma.mealPlan.create({
+    data: {
+      householdId,
+      name: `Plan from ${today.toISOString().slice(0, 10)}`,
+      startDate: today,
+      endDate: new Date(today.getTime() + 27 * DAY_MS),
+    },
+  });
+}
 
 export async function mealPlanRoutes(app: FastifyInstance) {
   app.get('/meal-plans', async () => {
@@ -38,11 +70,121 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       data: {
         mealPlanId: id,
         recipeId: data.recipeId,
-        date: data.date,
+        date: data.date, // undefined = staged/unassigned
         slot: data.slot,
         servingsPlanned: data.servingsPlanned,
       },
     });
+  });
+
+  // Stage a recipe into the current plan as unassigned (the "Add to plan" button).
+  app.post('/meal-plans/stage', async (req, reply) => {
+    const data = stageRecipeSchema.parse(req.body);
+    const household = await getHousehold();
+    const plan = await currentPlan(household.id);
+    const recipe = await prisma.recipe.findUniqueOrThrow({ where: { id: data.recipeId } });
+    const entry = await prisma.mealPlanEntry.create({
+      data: {
+        mealPlanId: plan.id,
+        recipeId: data.recipeId,
+        slot: data.slot,
+        servingsPlanned: data.servings ?? recipe.servings ?? 2,
+      },
+      include: { recipe: true },
+    });
+    reply.code(201);
+    return { planId: plan.id, planName: plan.name, entry };
+  });
+
+  // Assign a staged entry to one or more dates: first date fills the entry, extras clone it.
+  app.post('/meal-plans/:id/entries/:entryId/assign', async (req) => {
+    const { id, entryId } = req.params as { id: string; entryId: string };
+    const { dates } = assignEntrySchema.parse(req.body);
+    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+
+    const sorted = [...dates].sort((a, b) => a.getTime() - b.getTime());
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.mealPlanEntry.update({ where: { id: entryId }, data: { date: sorted[0] } });
+      const extras = await Promise.all(
+        sorted.slice(1).map((date) =>
+          tx.mealPlanEntry.create({
+            data: {
+              mealPlanId: id,
+              recipeId: entry.recipeId,
+              date,
+              slot: entry.slot,
+              servingsPlanned: entry.servingsPlanned,
+            },
+          }),
+        ),
+      );
+      // Stretch the plan window to cover assigned dates.
+      const plan = await tx.mealPlan.findUniqueOrThrow({ where: { id } });
+      const min = sorted[0]!;
+      const max = sorted[sorted.length - 1]!;
+      await tx.mealPlan.update({
+        where: { id },
+        data: {
+          startDate: min < plan.startDate ? min : plan.startDate,
+          endDate: max > plan.endDate ? max : plan.endDate,
+        },
+      });
+      return extras;
+    });
+    return { assigned: sorted.length, createdExtra: created.length };
+  });
+
+  // ---- Recurring meals (rules) ----
+  app.get('/meal-rules', async () => {
+    const household = await getHousehold();
+    return prisma.mealRule.findMany({
+      where: { householdId: household.id, active: true },
+      include: { recipe: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+  });
+
+  app.post('/meal-rules', async (req, reply) => {
+    const data = mealRuleCreateSchema.parse(req.body);
+    const household = await getHousehold();
+    reply.code(201);
+    return prisma.mealRule.create({
+      data: { ...data, householdId: household.id },
+      include: { recipe: { select: { id: true, name: true } } },
+    });
+  });
+
+  app.delete('/meal-rules/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await prisma.mealRule.delete({ where: { id } });
+    reply.code(204);
+  });
+
+  // Materialize active rules into an existing plan's date range (idempotent per recipe+date).
+  app.post('/meal-plans/:id/apply-rules', async (req) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold();
+    const plan = await prisma.mealPlan.findUniqueOrThrow({
+      where: { id },
+      include: { entries: true },
+    });
+    const days = Math.max(1, Math.round((plan.endDate.getTime() - plan.startDate.getTime()) / DAY_MS) + 1);
+    const rules = await activeRules(household.id);
+    const wanted = materializeRules(rules, plan.startDate, days);
+    const existing = new Set(
+      plan.entries.filter((e) => e.date).map((e) => `${e.recipeId}|${e.date!.toISOString().slice(0, 10)}`),
+    );
+    const fresh = wanted.filter((w) => !existing.has(`${w.recipeId}|${w.date.toISOString().slice(0, 10)}`));
+    await prisma.mealPlanEntry.createMany({
+      data: fresh.map((w) => ({
+        mealPlanId: id,
+        recipeId: w.recipeId,
+        date: w.date,
+        slot: w.slot,
+        servingsPlanned: w.servings ?? 2,
+      })),
+    });
+    return { applied: fresh.length, skippedExisting: wanted.length - fresh.length };
   });
 
   app.delete('/meal-plans/:id/entries/:entryId', async (req, reply) => {
@@ -55,6 +197,154 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     await prisma.mealPlan.delete({ where: { id } });
     reply.code(204);
+  });
+
+  // Auto-generate a plan: score a candidate pool (favorites + top-rated sample + cookable),
+  // then greedy-pick with variety constraints. Regenerating gives a different week (jitter).
+  app.post('/meal-plans/generate', async (req, reply) => {
+    const opts = generateMealPlanSchema.parse(req.body ?? {});
+    const household = await getHousehold();
+
+    // Dinner slots use a main-course category ALLOWLIST. Food.com categories are too messy
+    // for a denylist (they include "Household Cleaner", "Teeth Whitener", "Bath/Beauty"…) —
+    // only recipes in a recognizably main-dish category qualify. Applies to favorites too:
+    // a favorited dessert still isn't dinner.
+    const MAINS =
+      'one dish|chicken|pork|meat|steak|stew|bean|lentil|chili|curr|spaghetti|penne|pasta|noodle|rice|lamb|ham\\b|roast|turkey|duck|veal|tuna|salmon|halibut|catfish|whitefish|crawfish|crab|lobster|shrimp|seafood|savory pie|tofu|soy|meatloaf|meatball|casserole|beef|goat|vegan|vegetarian|fish|dinner|main|soup|miscellaneous';
+    const isDinner = opts.slot === 'dinner';
+    const mainsRe = new RegExp(MAINS, 'i');
+    const categoryOk = (category: string | null) =>
+      !isDinner || (!!category && mainsRe.test(category));
+
+    type Candidate = Recipe & { ingredients: RecipeIngredient[] };
+    const pool = new Map<string, Candidate>();
+    const include = { ingredients: true } as const;
+
+    // Favorites always make the pool (category-filtered for dinner slots).
+    for (const r of await prisma.recipe.findMany({
+      where: { householdId: household.id, isFavorite: true },
+      include,
+      take: 100,
+    })) {
+      if (categoryOk(r.category)) pool.set(r.id, r);
+    }
+
+    // Well-reviewed random sample (random() keeps regenerations fresh).
+    // Sample well-regarded recipes; sources without review counts (Epicurious/TheMealDB)
+    // qualify on rating alone or on having no rating data at all.
+    const sampled = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "Recipe"
+      WHERE "householdId" = ${household.id}
+        AND ("externalRating" >= 4 OR "externalRating" IS NULL)
+        AND (NOT ${isDinner} OR (category IS NOT NULL AND lower(category) ~ ${MAINS.toLowerCase()}))
+      ORDER BY random() LIMIT 300`;
+    for (const r of await prisma.recipe.findMany({
+      where: { id: { in: sampled.map((s) => s.id) } },
+      include,
+    }))
+      pool.set(r.id, r);
+
+    // Recipes fully covered by the pantry (the cook-from-pantry set).
+    if (opts.preferPantry) {
+      for (const r of await prisma.recipe.findMany({
+        where: {
+          householdId: household.id,
+          AND: [
+            { ingredients: { some: { canonicalItemId: { not: null } } } },
+            { ingredients: { none: { canonicalItemId: null, optional: false } } },
+          ],
+        },
+        include,
+        take: 300,
+      })) {
+        if (categoryOk(r.category)) pool.set(r.id, r);
+      }
+    }
+
+    if (pool.size === 0) {
+      reply.code(422);
+      return { message: 'No candidate recipes — import or add recipes first' };
+    }
+
+    const pantry = await pantryTotals(household.id);
+    const scored = [...pool.values()].map((r) => {
+      const cov = recipeCoverage(r.ingredients, pantry);
+      const covFraction = cov.requiredCount > 0 ? cov.satisfiedCount / cov.requiredCount : 0;
+      // Sources without review counts get a neutral confidence instead of zero.
+      const confidence =
+        r.externalRatingCount != null
+          ? Math.min(1, Math.log1p(r.externalRatingCount) / Math.log(50))
+          : 0.6;
+      let score = (r.externalRating ?? 3) * confidence;
+      if (opts.favoritesFirst && r.isFavorite) score += 2.5;
+      if (opts.preferPantry) score += 3 * covFraction + (cov.cookable ? 1 : 0);
+      score += Math.random(); // jitter: regenerate -> different week
+      return { r, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+
+    // Recurring meals claim their dates first; picks fill the remaining days.
+    const start = opts.startDate ?? new Date();
+    start.setHours(12, 0, 0, 0);
+    const ruleEntries = materializeRules(await activeRules(household.id), start, opts.days);
+    const ruleDates = new Set(ruleEntries.map((r) => r.date.toISOString().slice(0, 10)));
+    const freeDates: Date[] = [];
+    for (let i = 0; i < opts.days; i++) {
+      const d = new Date(start.getTime() + i * 86_400_000);
+      if (!ruleDates.has(d.toISOString().slice(0, 10))) freeDates.push(d);
+    }
+    const picks: Candidate[] = [];
+    const cuisineCount = new Map<string, number>();
+    const categoryCount = new Map<string, number>();
+    const pickFrom = (relaxed: boolean) => {
+      for (const { r } of scored) {
+        if (picks.length >= freeDates.length) break;
+        if (picks.some((p) => p.id === r.id)) continue;
+        if (!relaxed) {
+          const cui = r.cuisine?.toLowerCase();
+          const cat = r.category?.toLowerCase();
+          if (cui && (cuisineCount.get(cui) ?? 0) >= 2) continue;
+          if (cat && (categoryCount.get(cat) ?? 0) >= 2) continue;
+          // Weekday evenings favor non-HARD recipes.
+          const day = freeDates[picks.length]!.getDay();
+          const weekday = day >= 1 && day <= 4;
+          if (weekday && r.complexity === 'HARD') continue;
+          if (cui) cuisineCount.set(cui, (cuisineCount.get(cui) ?? 0) + 1);
+          if (cat) categoryCount.set(cat, (categoryCount.get(cat) ?? 0) + 1);
+        }
+        picks.push(r);
+      }
+    };
+    pickFrom(false);
+    if (picks.length < freeDates.length) pickFrom(true);
+
+    const plan = await prisma.mealPlan.create({
+      data: {
+        householdId: household.id,
+        name: `Week of ${start.toISOString().slice(0, 10)}`,
+        startDate: start,
+        endDate: new Date(start.getTime() + (opts.days - 1) * 86_400_000),
+        entries: {
+          create: [
+            ...ruleEntries.map((e) => ({
+              recipeId: e.recipeId,
+              date: e.date,
+              slot: e.slot,
+              servingsPlanned: e.servings ?? 2,
+            })),
+            ...picks.map((r, i) => ({
+              recipeId: r.id,
+              date: freeDates[i]!,
+              slot: opts.slot,
+              servingsPlanned: r.servings || 2,
+            })),
+          ],
+        },
+      },
+      include: { entries: { include: { recipe: true } } },
+    });
+    reply.code(201);
+    return plan;
   });
 
   // Aggregate ingredients across the plan (scaled by servings), subtract inventory on hand,

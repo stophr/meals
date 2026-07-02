@@ -316,6 +316,91 @@ select.chip {
   line-height: 1.5;
 }
 
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.btn-row .btn {
+  margin-top: 0;
+}
+.btn-alt {
+  background: var(--card);
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+.repeat-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  align-items: center;
+}
+.repeat-form select,
+.repeat-form input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.repeat-form input {
+  width: 70px;
+}
+.section-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+.rules-card {
+  margin-bottom: 12px;
+}
+.assign-picker {
+  margin: 8px 0;
+}
+.date-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* --- meal plan entries --- */
+.plan-entries {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-entries li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+}
+.plan-day {
+  color: var(--muted);
+  width: 2.6em;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.plan-recipe {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry-x {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+
 .tab-bar {
   position: fixed;
   bottom: 0;

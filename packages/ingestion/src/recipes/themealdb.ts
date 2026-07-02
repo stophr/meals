@@ -71,3 +71,21 @@ export async function getMeal(externalId: string): Promise<NormalizedRecipe> {
   if (!meal) throw new Error(`TheMealDB meal ${externalId} not found`);
   return mealToRecipe(meal);
 }
+
+/** All cuisine areas TheMealDB knows ("American", "Thai", …) — for full-dump imports. */
+export async function listAreas(): Promise<string[]> {
+  const res = await fetch(`${BASE}/list.php?a=list`, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`TheMealDB HTTP ${res.status}`);
+  const data = (await res.json()) as { meals: { strArea: string }[] | null };
+  return (data.meals ?? []).map((m) => m.strArea);
+}
+
+/** Meal ids for one area (light rows; fetch details via getMeal). */
+export async function listMealIdsByArea(area: string): Promise<string[]> {
+  const res = await fetch(`${BASE}/filter.php?a=${encodeURIComponent(area)}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`TheMealDB HTTP ${res.status}`);
+  const data = (await res.json()) as { meals: { idMeal: string }[] | null };
+  return (data.meals ?? []).map((m) => m.idMeal);
+}

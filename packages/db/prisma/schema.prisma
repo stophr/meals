@@ -100,6 +100,7 @@ model Household {
   providers      Provider[]
   canonicalItems CanonicalItem[]
   recipes        Recipe[]
+  mealRules      MealRule[]
   inventory      InventoryLot[]
   mealPlans      MealPlan[]
   shoppingLists  ShoppingList[]
@@ -299,6 +300,7 @@ model Recipe {
 
   ingredients   RecipeIngredient[]
   mealPlanEntries MealPlanEntry[]
+  mealRules       MealRule[]
 
   @@index([householdId])
   @@index([householdId, cuisine])
@@ -384,12 +386,41 @@ model MealPlanEntry {
   recipeId String
   recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
 
-  date            DateTime
-  slot            String   @default("dinner")
-  servingsPlanned Int      @default(1)
+  // Null = staged/unassigned: the recipe sits in the plan without a day yet.
+  date            DateTime?
+  slot            String    @default("dinner")
+  servingsPlanned Int       @default(1)
 
   @@index([mealPlanId])
   @@index([recipeId])
+}
+
+// Recurring meals: "tacos every Tuesday", "pizza once a week on a random day",
+// "pot roast monthly on the 15th". Materialized into plan entries per date range.
+enum RepeatKind {
+  RANDOM_WEEKLY
+  RANDOM_MONTHLY
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model MealRule {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recipeId    String
+  recipe      Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  kind       RepeatKind
+  weekday    Int? // 0=Sun..6=Sat, for WEEKLY
+  dayOfMonth Int? // 1..31 (clamped to month length), for MONTHLY
+  slot       String     @default("dinner")
+  servings   Int?
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+
+  @@index([householdId, active])
 }
 
 model ShoppingList {

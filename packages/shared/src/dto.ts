@@ -154,12 +154,53 @@ export const mealPlanCreateSchema = z.object({
 });
 export const mealPlanEntryCreateSchema = z.object({
   recipeId: cuid,
-  date: z.coerce.date(),
+  date: z.coerce.date().optional(), // omitted = staged/unassigned
   slot: z.string().default('dinner'),
   servingsPlanned: z.number().int().positive().default(1),
 });
+
+/** Stage a recipe into the current plan as unassigned. */
+export const stageRecipeSchema = z.object({
+  recipeId: cuid,
+  servings: z.number().int().positive().optional(),
+  slot: z.string().default('dinner'),
+});
+
+/** Assign a staged entry to one or more concrete dates. */
+export const assignEntrySchema = z.object({
+  dates: z.array(z.coerce.date()).min(1).max(31),
+});
+
+// ---- Recurring meals ----
+export const repeatKinds = ['RANDOM_WEEKLY', 'RANDOM_MONTHLY', 'DAILY', 'WEEKLY', 'MONTHLY'] as const;
+export const mealRuleCreateSchema = z
+  .object({
+    recipeId: cuid,
+    kind: z.enum(repeatKinds),
+    weekday: z.number().int().min(0).max(6).optional(), // WEEKLY
+    dayOfMonth: z.number().int().min(1).max(31).optional(), // MONTHLY
+    slot: z.string().default('dinner'),
+    servings: z.number().int().positive().optional(),
+  })
+  .refine((r) => r.kind !== 'WEEKLY' || r.weekday != null, {
+    message: 'weekday required for WEEKLY',
+  })
+  .refine((r) => r.kind !== 'MONTHLY' || r.dayOfMonth != null, {
+    message: 'dayOfMonth required for MONTHLY',
+  });
+export type MealRuleCreate = z.infer<typeof mealRuleCreateSchema>;
 export type MealPlanCreate = z.infer<typeof mealPlanCreateSchema>;
 export type MealPlanEntryCreate = z.infer<typeof mealPlanEntryCreateSchema>;
+
+/** Auto-generate a week (or N days) of meals from the recipe catalog. */
+export const generateMealPlanSchema = z.object({
+  startDate: z.coerce.date().optional(), // default: today
+  days: z.number().int().min(1).max(14).default(7),
+  slot: z.string().default('dinner'),
+  preferPantry: z.boolean().default(true), // boost recipes coverable from inventory
+  favoritesFirst: z.boolean().default(true),
+});
+export type GenerateMealPlan = z.infer<typeof generateMealPlanSchema>;
 
 // ---- Shopping lists ----
 export const shoppingListCreateSchema = z.object({

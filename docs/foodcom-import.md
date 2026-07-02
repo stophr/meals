@@ -1,5 +1,20 @@
 # Bulk recipe import — Food.com dataset
 
+> **⚠️ Superseded for now:** the Food.com dump's quantity column is unit-less, which breaks
+> amount-based pantry math. The current dev catalog uses `import-dev-catalog.ts` instead
+> (~1,100 recipes from TheMealDB + Epicurious, both with real measurements):
+>
+> ```bash
+> python -c "import kagglehub; print(kagglehub.dataset_download('hugodarwood/epirecipes'))"
+> DATABASE_URL=… pnpm --filter @meals/api exec tsx src/scripts/import-dev-catalog.ts \
+>   --purge-foodcom --epi-file <dir>/full_format_recipes.json --epi-target 700
+> DATABASE_URL=… pnpm --filter @meals/api exec tsx src/scripts/link-ingredients.ts \
+>   --llm --llm-max 3000 --create-threshold 2
+> ```
+>
+> The Food.com importer below still works if you want sheer catalog size and can live with
+> presence-based (count) coverage.
+
 Loads the Food.com Kaggle dataset into the catalog: **~522K recipes with aggregated star
 ratings, review counts, ingredient quantities, categories, keywords, and images**.
 
