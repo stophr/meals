@@ -1,21 +1,25 @@
-import type { RecipeCoverage, UnitDimension } from '@meals/shared';
+import type { RecipeCoverage, UnitDimension, DimensionedAmount } from '@meals/shared';
+import { reconcile } from '@meals/shared';
 import { dimensionOf } from '@meals/core';
 import type { Unit } from '@meals/db';
 
 // "Cook from pantry" math: for each recipe, check which linked ingredients the current
-// inventory fully covers. Free-text (unlinked) ingredients can't be verified — surfaced as
-// unlinkedCount so the UI can show "N unverified" instead of pretending.
-//
-// DIMENSION-AWARE: a need measured by weight is only covered by weight stock, etc. Stocking
-// "50 each Sugar" never covers a recipe's "300 g sugar" — different measurement types.
+// inventory covers. Cross-dimension needs are bridged by the item's density when available
+// ("2 cups sugar" covered by a "5 lb" bag); otherwise weight/volume never cross-net.
 
+interface CoverageItemFacts {
+  name?: string;
+  assumeStocked?: boolean;
+  gramsPerMl?: unknown;
+  gramsPerEach?: unknown;
+}
 interface CoverageIngredient {
   canonicalItemId: string | null;
   baseQuantity: unknown; // Prisma Decimal | null
   unit?: Unit | null;
   optional: boolean;
   freeText?: string | null;
-  canonicalItem?: { name?: string; assumeStocked?: boolean } | null;
+  canonicalItem?: CoverageItemFacts | null;
 }
 
 function ingredientDimension(unit: Unit | null | undefined): UnitDimension {
@@ -24,10 +28,13 @@ function ingredientDimension(unit: Unit | null | undefined): UnitDimension {
 
 export function recipeCoverage(
   ingredients: CoverageIngredient[],
-  pantry: Map<string, Map<UnitDimension, number>>,
+  pantry: Map<string, DimensionedAmount[]>,
 ): RecipeCoverage {
   // Aggregate needs per (item, dimension) — a recipe may use the same item twice.
-  const needs = new Map<string, { itemId: string; name: string; dim: UnitDimension; needed: number }>();
+  const needs = new Map<
+    string,
+    { itemId: string; name: string; dim: UnitDimension; needed: number; facts: CoverageItemFacts }
+  >();
   const alwaysStocked: string[] = []; // water/ice — assumed on hand, never "missing"
   let unlinkedCount = 0;
 
@@ -52,15 +59,21 @@ export function recipeCoverage(
         name: ing.canonicalItem?.name ?? 'item',
         dim,
         needed: add,
+        facts: ing.canonicalItem ?? {},
       });
   }
 
   const missing: RecipeCoverage['missing'] = [];
   const satisfiedItemIds: string[] = [];
   for (const n of needs.values()) {
-    const have = pantry.get(n.itemId)?.get(n.dim) ?? 0;
-    if (have >= n.needed) satisfiedItemIds.push(n.itemId);
-    else missing.push({ name: n.name, neededBase: n.needed, haveBase: have });
+    const lots = pantry.get(n.itemId) ?? [];
+    const f = {
+      gramsPerMl: n.facts.gramsPerMl != null ? Number(n.facts.gramsPerMl) : null,
+      gramsPerEach: n.facts.gramsPerEach != null ? Number(n.facts.gramsPerEach) : null,
+    };
+    const { covered, shortfallBase } = reconcile(n.needed, n.dim, lots, f);
+    if (covered) satisfiedItemIds.push(n.itemId);
+    else missing.push({ name: n.name, neededBase: n.needed, haveBase: n.needed - shortfallBase });
   }
 
   return {

@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { UNITS, UNIT_TABLE, BASE_UNIT } from '@meals/shared';
-import type { UnitDimension } from '@meals/shared';
+import { UNIT_TABLE, BASE_UNIT, dimensionOf } from '@meals/shared';
+import type { UnitDimension, Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
 
-// Units grouped by what they measure, so stocking "Sugar" nudges toward weight/volume
-// instead of a bare count — a count can't be deducted against a recipe's "300 g sugar".
-const UNIT_GROUPS: { label: string; dim: UnitDimension }[] = [
-  { label: 'Weight', dim: 'MASS' },
-  { label: 'Volume', dim: 'VOLUME' },
-  { label: 'Count', dim: 'COUNT' },
+// Units grouped by what they measure, Imperial-first for a US household. A count can't be
+// deducted against a recipe's "2 cups sugar", so weight/volume lead each group.
+const UNIT_GROUPS: { label: string; units: Unit[] }[] = [
+  { label: 'Weight', units: ['LB', 'OZ', 'G', 'KG', 'MG'] },
+  { label: 'Volume', units: ['CUP', 'TBSP', 'TSP', 'FLOZ', 'ML', 'L'] },
+  { label: 'Count', units: ['EACH', 'PACK', 'CAN', 'BOTTLE', 'BUNCH'] },
 ];
+// Friendly default when stocking an item of a given measurement type.
+const DEFAULT_UNIT: Record<UnitDimension, string> = { MASS: 'LB', VOLUME: 'CUP', COUNT: 'EACH' };
+
+function defaultUnitFor(baseUnit?: string | null): string {
+  return baseUnit ? DEFAULT_UNIT[dimensionOf(baseUnit as Unit)] : 'EACH';
+}
 
 function UnitSelect({
   value,
@@ -24,8 +30,8 @@ function UnitSelect({
   return (
     <select className={className} value={value} onChange={(e) => onChange(e.target.value)}>
       {UNIT_GROUPS.map((g) => (
-        <optgroup key={g.dim} label={g.label}>
-          {UNITS.filter((u) => UNIT_TABLE[u].dimension === g.dim).map((u) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.units.map((u) => (
             <option key={u} value={u}>
               {u.toLowerCase()}
             </option>
@@ -244,7 +250,7 @@ export function Inventory() {
   function pickItem(hit: ItemHit) {
     setAddSel(hit);
     setAddQuery(hit.name);
-    setAddUnit(hit.baseUnit ?? 'EACH');
+    setAddUnit(defaultUnitFor(hit.baseUnit));
     setAddResults(undefined);
   }
 

@@ -99,3 +99,114 @@ export function convert(value: number, from: Unit, to: Unit): number {
   }
   return (value * a.factor) / b.factor;
 }
+
+// ---- Density bridge: cross-dimension conversion for a single item ----
+// Per-item factors let us reconcile a weight in the pantry against a volume in a recipe
+// (a "5 lb sugar bag" vs "2 cups sugar"). Grams is the pivot. Missing a needed factor
+// returns null so callers fall back to same-dimension math instead of guessing.
+
+export interface DensityFactors {
+  gramsPerMl?: number | null; // density (mass per volume)
+  gramsPerEach?: number | null; // typical mass of one unit (1 egg ≈ 50 g)
+}
+
+export interface DimensionedAmount {
+  base: number; // in the dimension's base unit: G / ML / EACH
+  dim: UnitDimension;
+}
+
+/** A base quantity (G/ML/EACH) expressed in grams, or null if the factor is unknown. */
+export function baseToGrams(base: number, dim: UnitDimension, f: DensityFactors): number | null {
+  if (dim === 'MASS') return base;
+  if (dim === 'VOLUME') return f.gramsPerMl ? base * f.gramsPerMl : null;
+  return f.gramsPerEach ? base * f.gramsPerEach : null; // COUNT
+}
+
+/** Grams expressed back in a target dimension's base unit, or null if unknown. */
+export function gramsToBase(grams: number, dim: UnitDimension, f: DensityFactors): number | null {
+  if (dim === 'MASS') return grams;
+  if (dim === 'VOLUME') return f.gramsPerMl ? grams / f.gramsPerMl : null;
+  return f.gramsPerEach ? grams / f.gramsPerEach : null;
+}
+
+/**
+ * Net a need (in its own dimension) against pantry stock of any dimension, bridging via
+ * density when possible. Returns the shortfall in the NEED's dimension. Falls back to
+ * same-dimension netting when a conversion factor is missing.
+ */
+export function reconcile(
+  needBase: number,
+  needDim: UnitDimension,
+  lots: DimensionedAmount[],
+  f: DensityFactors,
+): { shortfallBase: number; covered: boolean } {
+  const needG = baseToGrams(needBase, needDim, f);
+  if (needG != null) {
+    // Sum every lot we CAN convert to grams. A lot we can't convert (a different dimension
+    // with no factor) simply can't satisfy this need — skip it, don't discard the rest.
+    let haveG = 0;
+    for (const l of lots) {
+      const g = baseToGrams(l.base, l.dim, f);
+      if (g != null) haveG += g;
+    }
+    const shortG = Math.max(0, needG - haveG);
+    return { shortfallBase: gramsToBase(shortG, needDim, f) ?? 0, covered: shortG <= 1e-6 };
+  }
+  // The need's own dimension has no factor: only same-dimension stock can cover it.
+  const haveSame = lots.filter((l) => l.dim === needDim).reduce((s, l) => s + l.base, 0);
+  const short = Math.max(0, needBase - haveSame);
+  return { shortfallBase: short, covered: short <= 1e-6 };
+}
+
+// ---- Imperial display ----
+// Internal storage stays SI (g/ml); the UI is US-household Imperial.
+
+const FRAC = ['', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞'];
+function niceFrac(x: number): string {
+  const whole = Math.floor(x);
+  const eighths = Math.round((x - whole) * 8);
+  if (eighths === 8) return String(whole + 1);
+  const f = FRAC[eighths];
+  if (whole === 0) return f || '0';
+  return f ? `${whole}${f}` : String(whole);
+}
+function dec(x: number): string {
+  return (Math.round(x * 10) / 10).toString();
+}
+
+// Rewrite metric measurements embedded in free text ("500g minced beef") to Imperial
+// ("1.1 lb minced beef"), leaving everything else untouched. Used to display recipe lines
+// sourced with metric units to a US household.
+const METRIC_TOKEN =
+  /(\d+(?:[.,]\d+)?)\s?(kilograms?|kg|milligrams?|mg|grams?|g|millilitres?|milliliters?|ml|centilitres?|cl|litres?|liters?|l)\b/gi;
+
+export function imperializeText(text: string): string {
+  return text.replace(METRIC_TOKEN, (whole, numStr: string, unitRaw: string) => {
+    const n = parseFloat(numStr.replace(',', '.'));
+    if (!isFinite(n)) return whole;
+    const u = unitRaw.toLowerCase();
+    if (u.startsWith('kg') || u.startsWith('kilogram')) return formatImperial(n * 1000, 'MASS');
+    if (u.startsWith('mg') || u.startsWith('milligram')) return formatImperial(n / 1000, 'MASS');
+    if (u === 'g' || u.startsWith('gram')) return formatImperial(n, 'MASS');
+    if (u === 'l' || u.startsWith('litre') || u.startsWith('liter')) return formatImperial(n * 1000, 'VOLUME');
+    if (u.startsWith('cl') || u.startsWith('centilitre')) return formatImperial(n * 10, 'VOLUME');
+    return formatImperial(n, 'VOLUME'); // ml / millilitre
+  });
+}
+
+/** Render a base quantity (G/ML/EACH) as a friendly Imperial string ("1½ cup", "1.1 lb"). */
+export function formatImperial(base: number, dim: UnitDimension): string {
+  if (dim === 'COUNT') return niceFrac(base);
+  if (dim === 'MASS') {
+    const lb = base / 453.592;
+    if (lb >= 1) return `${dec(lb)} lb`;
+    return `${dec(base / 28.3495)} oz`;
+  }
+  const ml = base;
+  if (ml / 3785.41 >= 1) return `${dec(ml / 3785.41)} gal`;
+  if (ml / 946.353 >= 1) return `${dec(ml / 946.353)} qt`;
+  if (ml / 236.588 >= 0.25) return `${niceFrac(ml / 236.588)} cup`;
+  if (ml / 29.5735 >= 1) return `${dec(ml / 29.5735)} fl oz`;
+  if (ml / 14.7868 >= 1) return `${niceFrac(ml / 14.7868)} tbsp`;
+  return `${niceFrac(ml / 4.92892)} tsp`;
+}

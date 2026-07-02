@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { formatImperial, dimensionOf } from '@meals/shared';
+import type { Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
 
@@ -470,7 +472,7 @@ export function Shopping() {
                     <div>
                       <div className="card-title">{it.canonicalItem.name}</div>
                       <div className="card-sub">
-                        {Number(it.quantityNeeded).toFixed(0)} {it.unit.toLowerCase()}
+                        {formatImperial(Number(it.quantityNeeded), dimensionOf(it.unit as Unit))}
                       </div>
                     </div>
                     <button

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { RecipeCoverage } from '@meals/shared';
+import { imperializeText, formatImperial, dimensionOf } from '@meals/shared';
+import type { Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 
 interface RecipeRow {
@@ -27,7 +29,8 @@ interface RecipeRow {
     id: string;
     freeText?: string | null;
     quantity: string;
-    unit: string;
+    unit: string | null;
+    baseQuantity?: string | null;
     optional: boolean;
     canonicalItemId?: string | null;
     canonicalItem?: { name: string } | null;
@@ -341,7 +344,9 @@ export function Recipes() {
             return (
               <li key={ing.id} className={cls}>
                 <span className="ing-mark">{mark}</span>
-                {ing.freeText ?? `${Number(ing.quantity)} ${ing.unit.toLowerCase()} ${ing.canonicalItem?.name ?? ''}`}
+                {ing.freeText
+                  ? imperializeText(ing.freeText)
+                  : `${formatImperial(Number(ing.baseQuantity ?? ing.quantity), ing.unit ? dimensionOf(ing.unit as Unit) : 'COUNT')} ${ing.canonicalItem?.name ?? ''}`}
                 {ing.optional && <em className="muted"> (optional)</em>}
               </li>
             );

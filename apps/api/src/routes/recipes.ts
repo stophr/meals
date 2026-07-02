@@ -13,7 +13,7 @@ import { toBaseQuantity, dimensionOf } from '@meals/core';
 import { importRecipeFromUrl, searchMeals, getMeal } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { recipeCoverage } from '../lib/coverage.js';
-import { pantryByItemDim, consumeFromInventory } from '../lib/inventory.js';
+import { pantryLots, consumeFromInventory } from '../lib/inventory.js';
 import { ingestRecipe } from '../lib/recipeIngest.js';
 import {
   loadItemPrices,
@@ -38,7 +38,13 @@ function cookTonightCost(
 }
 
 const ingredientInclude = {
-  ingredients: { include: { canonicalItem: { select: { name: true, assumeStocked: true } } } },
+  ingredients: {
+    include: {
+      canonicalItem: {
+        select: { name: true, assumeStocked: true, gramsPerMl: true, gramsPerEach: true },
+      },
+    },
+  },
 } satisfies Prisma.RecipeInclude;
 
 export async function recipeRoutes(app: FastifyInstance) {
@@ -95,7 +101,7 @@ export async function recipeRoutes(app: FastifyInstance) {
               : [{ name: 'asc' }];
 
     const [pantry, prices] = await Promise.all([
-      pantryByItemDim(household.id),
+      pantryLots(household.id),
       loadItemPrices(household.id),
     ]);
     const withCost = <T extends { ingredients: CostIngredient[]; servings: number }>(r: T) => {
@@ -265,7 +271,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       include: { ingredients: { include: { canonicalItem: true } } },
     });
     const [pantry, prices] = await Promise.all([
-      pantryByItemDim(household.id),
+      pantryLots(household.id),
       loadItemPrices(household.id),
     ]);
     const coverage = recipeCoverage(recipe.ingredients, pantry);

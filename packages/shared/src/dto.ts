@@ -34,6 +34,8 @@ export const canonicalItemCreateSchema = z.object({
   recipeUnit: unitSchema.optional(),
   purchaseUnit: unitSchema.optional(),
   assumeStocked: z.boolean().optional(),
+  gramsPerMl: positive.optional(),
+  gramsPerEach: positive.optional(),
 });
 export const canonicalItemUpdateSchema = canonicalItemCreateSchema.partial();
 export type CanonicalItemCreate = z.infer<typeof canonicalItemCreateSchema>;

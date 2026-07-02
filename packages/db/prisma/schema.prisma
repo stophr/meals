@@ -147,6 +147,11 @@ model CanonicalItem {
   recipeUnit   Unit?
   purchaseUnit Unit?
 
+  // Density bridge: reconcile weight <-> volume <-> count for THIS item, so a "5 lb sugar
+  // bag" nets against "2 cups sugar". Grams is the pivot; nulls fall back to same-dimension.
+  gramsPerMl   Decimal? @db.Decimal(10, 4) // density (mass per volume)
+  gramsPerEach Decimal? @db.Decimal(10, 4) // typical mass of one unit (1 egg ≈ 50 g)
+
   // Always-on-hand staples (water, tap water, ice): assumed in stock, so they never
   // count as "missing" for cook-from-pantry and are skipped when building shopping lists.
   assumeStocked Boolean @default(false)

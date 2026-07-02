@@ -11,7 +11,7 @@ import {
   mealRuleCreateSchema,
 } from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
-import { pantryByItemDim } from '../lib/inventory.js';
+import { pantryLots } from '../lib/inventory.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { materializeRules, activeRules } from '../lib/mealRules.js';
 import { lockedDays, dayKey } from '../lib/queue.js';
@@ -282,11 +282,24 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       !isDinner || (!!category && mainsRe.test(category));
 
     type Candidate = Recipe & {
-      ingredients: (RecipeIngredient & { canonicalItem: { assumeStocked: boolean } | null })[];
+      ingredients: (RecipeIngredient & {
+        canonicalItem: {
+          name: string;
+          assumeStocked: boolean;
+          gramsPerMl: unknown;
+          gramsPerEach: unknown;
+        } | null;
+      })[];
     };
     const pool = new Map<string, Candidate>();
     const include = {
-      ingredients: { include: { canonicalItem: { select: { assumeStocked: true } } } },
+      ingredients: {
+        include: {
+          canonicalItem: {
+            select: { name: true, assumeStocked: true, gramsPerMl: true, gramsPerEach: true },
+          },
+        },
+      },
     } as const;
 
     // Favorites always make the pool (category-filtered for dinner slots).
@@ -353,7 +366,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       return { message: 'No candidate recipes — import or add recipes first' };
     }
 
-    const pantry = await pantryByItemDim(household.id);
+    const pantry = await pantryLots(household.id);
     const scored = [...pool.values()].map((r) => {
       const cov = recipeCoverage(r.ingredients, pantry);
       const covFraction = cov.requiredCount > 0 ? cov.satisfiedCount / cov.requiredCount : 0;
