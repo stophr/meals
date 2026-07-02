@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reconcile, formatImperial, baseToGrams, imperializeText } from '@meals/shared';
+import { reconcile, formatImperial, baseToGrams, imperializeText, crossConvert } from '@meals/shared';
 
 describe('density bridge', () => {
   const sugar = { gramsPerMl: 0.85, gramsPerEach: null };
@@ -32,6 +32,28 @@ describe('density bridge', () => {
     expect(baseToGrams(3, 'COUNT', egg)).toBe(150);
     const r = reconcile(150, 'MASS', [{ base: 3, dim: 'COUNT' }], egg);
     expect(r.covered).toBe(true);
+  });
+});
+
+describe('crossConvert (pricing bridge)', () => {
+  const sugar = { gramsPerMl: 0.85, gramsPerEach: null };
+
+  it('is identity within a dimension (no factor needed)', () => {
+    expect(crossConvert(500, 'MASS', 'MASS', {})).toBe(500);
+    expect(crossConvert(250, 'VOLUME', 'VOLUME', {})).toBe(250);
+  });
+
+  it('prices a volume need from a weight pack: a 2 kg bag as cups of sugar', () => {
+    // 2 kg -> ml of sugar = 2000 / 0.85 ≈ 2353 ml ≈ 9.95 cups
+    const packMl = crossConvert(2000, 'MASS', 'VOLUME', sugar)!;
+    expect(packMl).toBeCloseTo(2352.9, 0);
+    // A recipe needing 1 cup (236.6 ml) costs need/packMl of a $4 bag.
+    const cost = (236.588 / packMl) * 4;
+    expect(cost).toBeCloseTo(0.4, 1);
+  });
+
+  it('returns null when no bridge exists', () => {
+    expect(crossConvert(500, 'MASS', 'VOLUME', {})).toBeNull();
   });
 });
 

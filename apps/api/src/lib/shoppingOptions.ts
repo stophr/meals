@@ -1,4 +1,7 @@
 import { prisma } from '@meals/db';
+import type { Unit } from '@meals/db';
+import { dimensionOf } from '@meals/core';
+import { crossConvert } from '@meals/shared';
 
 // Per-item provider options for a shopping list: every store × size-variant that has a
 // current price, with unit price (per base unit) and pack-adjusted total for the needed
@@ -56,15 +59,24 @@ export async function computeItemOptions(
 
   return list.items.map((item) => {
     const needed = Number(item.baseQuantityNeeded);
+    const needDim = dimensionOf(item.unit as Unit);
+    const factors = {
+      gramsPerMl: item.canonicalItem.gramsPerMl != null ? Number(item.canonicalItem.gramsPerMl) : null,
+      gramsPerEach: item.canonicalItem.gramsPerEach != null ? Number(item.canonicalItem.gramsPerEach) : null,
+    };
     const options: ItemOption[] = [];
     for (const provider of providers) {
       for (const product of provider.products) {
         if (product.canonicalItemId !== item.canonicalItemId) continue;
         const price = product.prices[0];
         if (!price) continue;
-        const packBase = product.baseQuantity ? Number(product.baseQuantity) : 0;
-        const packsNeeded = packBase > 0 ? Math.max(1, Math.ceil(needed / packBase)) : 1;
-        const unitPrice = packBase > 0 ? Number(price.price) / packBase : null;
+        // Express the pack in the NEED's dimension (bridging weight<->volume via density) so
+        // packs-needed and unit price are always comparable, even across mixed-unit products.
+        const packRaw = product.baseQuantity ? Number(product.baseQuantity) : 0;
+        const packDim = product.packUnit ? dimensionOf(product.packUnit as Unit) : needDim;
+        const packBase = packRaw > 0 ? crossConvert(packRaw, packDim, needDim, factors) : null;
+        const packsNeeded = packBase && packBase > 0 ? Math.max(1, Math.ceil(needed / packBase)) : 1;
+        const unitPrice = packBase && packBase > 0 ? Number(price.price) / packBase : null;
         options.push({
           providerId: provider.id,
           providerName: provider.name,

@@ -38,7 +38,9 @@ const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 function lookup(name: string, table: Record<string, number>): number | undefined {
   if (table[name] != null) return table[name];
   for (const key of Object.keys(table).sort((a, b) => b.length - a.length)) {
-    const re = new RegExp(`(^| )${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`);
+    // Allow a trailing plural (-s / -es) so singular keys match plural items
+    // ("carrot"->"carrots", "tomato"->"tomatoes").
+    const re = new RegExp(`(^| )${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(e?s)?( |$)`);
     if (re.test(name)) return table[key];
   }
   return undefined;

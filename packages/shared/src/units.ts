@@ -130,6 +130,22 @@ export function gramsToBase(grams: number, dim: UnitDimension, f: DensityFactors
 }
 
 /**
+ * Convert a base quantity from one dimension to another via the grams pivot. Identity when
+ * the dimensions match (no factor needed). Returns null when the bridge is missing — so a
+ * "16 oz" pack can be measured against a "cups" need only when a density is known.
+ */
+export function crossConvert(
+  base: number,
+  fromDim: UnitDimension,
+  toDim: UnitDimension,
+  f: DensityFactors,
+): number | null {
+  if (fromDim === toDim) return base;
+  const g = baseToGrams(base, fromDim, f);
+  return g == null ? null : gramsToBase(g, toDim, f);
+}
+
+/**
  * Net a need (in its own dimension) against pantry stock of any dimension, bridging via
  * density when possible. Returns the shortfall in the NEED's dimension. Falls back to
  * same-dimension netting when a conversion factor is missing.

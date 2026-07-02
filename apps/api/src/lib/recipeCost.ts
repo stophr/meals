@@ -1,5 +1,6 @@
 import { prisma } from '@meals/db';
 import { dimensionOf } from '@meals/core';
+import { crossConvert } from '@meals/shared';
 import type { Unit } from '@meals/db';
 
 // Recipe costing from real store prices.
@@ -15,6 +16,8 @@ export interface ItemPrice {
   packBase: number | null; // pack size in base units, when known
   packDim: ReturnType<typeof dimensionOf> | null;
   isDeal: boolean;
+  gramsPerMl: number | null; // density bridge factors (from the canonical item)
+  gramsPerEach: number | null;
 }
 
 /**
@@ -30,13 +33,17 @@ export async function loadItemPrices(householdId: string): Promise<Map<string, I
       isDeal: boolean;
       baseQuantity: string | null;
       packUnit: string | null;
+      gramsPerMl: string | null;
+      gramsPerEach: string | null;
     }[]
   >`
     SELECT DISTINCT ON (po."providerProductId")
-      pp."canonicalItemId", po.price::text, po."isDeal", pp."baseQuantity"::text, pp."packUnit"
+      pp."canonicalItemId", po.price::text, po."isDeal", pp."baseQuantity"::text, pp."packUnit",
+      ci."gramsPerMl"::text, ci."gramsPerEach"::text
     FROM "PriceObservation" po
     JOIN "ProviderProduct" pp ON pp.id = po."providerProductId"
     JOIN "Provider" p ON p.id = pp."providerId"
+    JOIN "CanonicalItem" ci ON ci.id = pp."canonicalItemId"
     WHERE p."householdId" = ${householdId}
       AND pp."canonicalItemId" IS NOT NULL
       AND po."validFrom" <= now()
@@ -50,6 +57,8 @@ export async function loadItemPrices(householdId: string): Promise<Map<string, I
       packBase: r.baseQuantity ? Number(r.baseQuantity) : null,
       packDim: r.packUnit ? dimensionOf(r.packUnit as Unit) : null,
       isDeal: r.isDeal,
+      gramsPerMl: r.gramsPerMl ? Number(r.gramsPerMl) : null,
+      gramsPerEach: r.gramsPerEach ? Number(r.gramsPerEach) : null,
     };
     const existing = map.get(r.canonicalItemId);
     if (!existing) {
@@ -101,12 +110,21 @@ export function costRecipe(
 
     const needed = Number(ing.baseQuantity);
     const ingDim = dimensionOf(ing.unit);
+    // Bridge the pack into the ingredient's dimension via density ("2 cups" priced from a
+    // 2 kg bag). Null = no bridge available, so fall back to one whole pack (upper bound).
+    const packInIngDim =
+      p.packBase && p.packBase > 0 && p.packDim
+        ? crossConvert(p.packBase, p.packDim, ingDim, {
+            gramsPerMl: p.gramsPerMl,
+            gramsPerEach: p.gramsPerEach,
+          })
+        : null;
     let cost: number;
-    if (p.packBase && p.packBase > 0 && p.packDim === ingDim) {
+    if (packInIngDim && packInIngDim > 0) {
       // Proportional share of the pack, but never more than buying whole packs.
-      cost = Math.min((needed / p.packBase) * p.price, Math.ceil(needed / p.packBase) * p.price);
+      cost = Math.min((needed / packInIngDim) * p.price, Math.ceil(needed / packInIngDim) * p.price);
     } else {
-      cost = p.price; // dimension mismatch or unknown pack size: one pack, upper bound
+      cost = p.price; // no pack size or no density bridge: one pack, upper bound
     }
     total += cost;
     priced++;
