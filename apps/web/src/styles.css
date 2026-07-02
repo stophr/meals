@@ -387,6 +387,99 @@ select.chip {
   border-radius: var(--radius);
 }
 
+/* --- slot tabs --- */
+.slot-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+.slot-tab {
+  flex: 1;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.slot-tab.active {
+  background: var(--green);
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+
+/* --- servings --- */
+.tile-servings {
+  flex-shrink: 0;
+  background: var(--green-light);
+  color: var(--green);
+  border: none;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.tile-servings:disabled {
+  opacity: 0.6;
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -8px 30px rgba(15, 23, 42, 0.18);
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  animation: sheet-up 0.18s ease;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(30%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.sheet-title {
+  font-weight: 700;
+  margin-bottom: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.sheet-value {
+  font-weight: 700;
+  min-width: 7ch;
+  text-align: center;
+}
+.sheet-hint {
+  margin-top: 8px;
+  font-size: 0.78rem;
+}
+
 /* --- kanban board --- */
 .board {
   display: flex;
@@ -508,6 +601,10 @@ select.chip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tile-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 .tile-actions {
   display: flex;

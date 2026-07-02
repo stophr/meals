@@ -171,10 +171,15 @@ export const assignEntrySchema = z.object({
   dates: z.array(z.coerce.date()).min(1).max(31),
 });
 
-/** Move an entry (drag & drop): a new date, or null back to unassigned. */
-export const moveEntrySchema = z.object({
-  date: z.coerce.date().nullable(),
-});
+/** Patch an entry: move it (date / null = unassigned) and/or rescale servings. */
+export const moveEntrySchema = z
+  .object({
+    date: z.coerce.date().nullable().optional(),
+    servingsPlanned: z.number().int().positive().max(99).optional(),
+  })
+  .refine((v) => v.date !== undefined || v.servingsPlanned !== undefined, {
+    message: 'Provide date and/or servingsPlanned',
+  });
 
 // ---- Recurring meals ----
 export const repeatKinds = ['RANDOM_WEEKLY', 'RANDOM_MONTHLY', 'DAILY', 'WEEKLY', 'MONTHLY'] as const;

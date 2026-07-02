@@ -216,27 +216,34 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     return { applied: fresh.length, skippedExisting: wanted.length - fresh.length };
   });
 
-  // Drag & drop: move an entry to another day, or back to unassigned (date null).
+  // Drag & drop / rescale: move an entry (date, or null = unassigned) and/or change servings.
   app.patch('/meal-plans/:id/entries/:entryId', async (req, reply) => {
     const { entryId } = req.params as { entryId: string };
-    const { date } = moveEntrySchema.parse(req.body);
+    const patch = moveEntrySchema.parse(req.body);
     const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
     if (entry.lockedByListId) {
       reply.code(409);
       return { message: 'This meal is locked — a shopping list already bought for it.' };
     }
-    if (date) {
+    if (patch.date) {
       const household = await getHousehold();
       const locks = await lockedDays(household.id);
-      if (locks.has(dayKey(date))) {
+      if (locks.has(dayKey(patch.date))) {
         reply.code(409);
         return { message: 'That day is locked — a shopping list already bought for it.' };
       }
     }
     return prisma.mealPlanEntry.update({
       where: { id: entryId },
-      data: { date },
-      include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+      data: {
+        ...(patch.date !== undefined ? { date: patch.date } : {}),
+        ...(patch.servingsPlanned !== undefined ? { servingsPlanned: patch.servingsPlanned } : {}),
+      },
+      include: {
+        recipe: {
+          select: { id: true, name: true, externalRating: true, imageUrl: true, servings: true },
+        },
+      },
     });
   });
 
@@ -442,19 +449,23 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   });
 
   // The rolling meal queue: unassigned staging + upcoming dated meals + locked days.
+  // The cutoff has a 36h grace window: clients send calendar days as local-noon dates, so a
+  // strict server-midnight (UTC) cutoff would hide "today" entries for western timezones.
   app.get('/queue', async () => {
     const household = await getHousehold();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const windowStart = new Date(Date.now() - 36 * 3_600_000);
+    const recipeSelect = {
+      select: { id: true, name: true, externalRating: true, imageUrl: true, servings: true },
+    };
     const [unassigned, upcoming, locks] = await Promise.all([
       prisma.mealPlanEntry.findMany({
         where: { mealPlan: { householdId: household.id }, date: null },
-        include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+        include: { recipe: recipeSelect },
         orderBy: { id: 'asc' },
       }),
       prisma.mealPlanEntry.findMany({
-        where: { mealPlan: { householdId: household.id }, date: { gte: today } },
-        include: { recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true } } },
+        where: { mealPlan: { householdId: household.id }, date: { gte: windowStart } },
+        include: { recipe: recipeSelect },
         orderBy: { date: 'asc' },
       }),
       lockedDays(household.id),

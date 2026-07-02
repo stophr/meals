@@ -17,9 +17,16 @@ interface QueueEntry {
   id: string;
   mealPlanId: string;
   date: string | null;
+  slot: string;
   servingsPlanned: number;
   locked?: boolean;
-  recipe: { id: string; name: string; externalRating?: number | null; imageUrl?: string | null };
+  recipe: {
+    id: string;
+    name: string;
+    externalRating?: number | null;
+    imageUrl?: string | null;
+    servings?: number | null;
+  };
 }
 interface QueueData {
   unassigned: QueueEntry[];
@@ -45,7 +52,21 @@ const RULE_LABEL: Record<string, string> = {
 const HORIZONS = [3, 5, 7, 10, 14];
 const BOARD_DAYS = 14;
 
+const SLOTS = [
+  { id: 'breakfast', label: '🍳 Bfast' },
+  { id: 'morning-snack', label: '🥐 AM' },
+  { id: 'lunch', label: '🥪 Lunch' },
+  { id: 'afternoon-snack', label: '🍎 PM' },
+  { id: 'dinner', label: '🍽 Dinner' },
+];
+
 const keyOf = (iso: string) => iso.slice(0, 10);
+
+function localDayKey(d: Date): string {
+  const copy = new Date(d);
+  copy.setHours(12, 0, 0, 0);
+  return copy.toISOString().slice(0, 10);
+}
 
 function boardDays(): { key: string; date: Date }[] {
   return Array.from({ length: BOARD_DAYS }, (_, i) => {
@@ -60,12 +81,14 @@ function boardDays(): { key: string; date: Date }[] {
 
 function MealTile({
   entry,
+  isTemplate,
   onRemove,
-  onDuplicate,
+  onServings,
 }: {
   entry: QueueEntry;
+  isTemplate?: boolean;
   onRemove: () => void;
-  onDuplicate: () => void;
+  onServings: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: entry.id,
@@ -74,7 +97,7 @@ function MealTile({
   return (
     <div
       ref={setNodeRef}
-      className={`tile ${entry.locked ? 'tile-locked' : ''} ${isDragging ? 'tile-dragging' : ''}`}
+      className={`tile ${entry.locked ? 'tile-locked' : ''} ${isDragging && !isTemplate ? 'tile-dragging' : ''}`}
       {...listeners}
       {...attributes}
     >
@@ -85,39 +108,42 @@ function MealTile({
       )}
       <div className="tile-body">
         <div className="tile-name">{entry.recipe.name}</div>
-        {entry.recipe.externalRating != null && (
-          <div className="stars">★{entry.recipe.externalRating.toFixed(1)}</div>
-        )}
+        <div className="tile-sub">
+          {entry.recipe.externalRating != null && (
+            <span className="stars">★{entry.recipe.externalRating.toFixed(1)} </span>
+          )}
+        </div>
       </div>
+      {!isTemplate && (
+        <button
+          className="tile-servings"
+          title="Servings — tap to adjust (½×, 2×…)"
+          disabled={entry.locked}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onServings();
+          }}
+        >
+          ×{entry.servingsPlanned}
+        </button>
+      )}
       {entry.locked ? (
         <span className="tile-lock" title="Locked — a shopping list bought for this day">
           🔒
         </span>
       ) : (
-        <div className="tile-actions">
-          <button
-            className="tile-btn"
-            title="Duplicate (drag the copy to another day)"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate();
-            }}
-          >
-            ⧉
-          </button>
-          <button
-            className="tile-btn tile-x"
-            title="Remove"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-          >
-            ✕
-          </button>
-        </div>
+        <button
+          className="tile-btn tile-x"
+          title="Remove"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        >
+          ✕
+        </button>
       )}
     </div>
   );
@@ -141,18 +167,18 @@ function TileGhost({ entry }: { entry: QueueEntry }) {
 function DayLane({
   dayKey,
   date,
-  entries,
   locked,
+  empty,
   children,
 }: {
   dayKey: string;
   date: Date;
-  entries: QueueEntry[];
   locked: boolean;
+  empty: boolean;
   children: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `day:${dayKey}`, disabled: locked });
-  const today = new Date().toISOString().slice(0, 10) === dayKey;
+  const today = localDayKey(new Date()) === dayKey;
   return (
     <div
       ref={setNodeRef}
@@ -165,19 +191,69 @@ function DayLane({
         </span>
         {locked && <span title="Shopped for — locked">🔒</span>}
       </div>
-      {entries.length === 0 && !locked && <div className="lane-empty">drop a meal here</div>}
+      {empty && !locked && <div className="lane-empty">drop a meal here</div>}
       {children}
     </div>
   );
 }
 
-function UnassignedShelf({ entries, children }: { entries: QueueEntry[]; children: React.ReactNode }) {
+function UnassignedShelf({ empty, children }: { empty: boolean; children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'unassigned' });
   return (
     <div ref={setNodeRef} className={`shelf ${isOver ? 'lane-over' : ''}`}>
-      <div className="section-label">Unassigned — drag onto a day</div>
-      {entries.length === 0 && <div className="lane-empty">stage recipes with ➕ Plan, or drag a tile here to unschedule</div>}
+      <div className="section-label">Templates — dragging COPIES onto a day</div>
+      {empty && (
+        <div className="lane-empty">stage recipes with ➕ Plan, or drag a scheduled tile here</div>
+      )}
       <div className="shelf-row">{children}</div>
+    </div>
+  );
+}
+
+/** Bottom sheet for rescaling one entry's servings. */
+function ServingsSheet({
+  entry,
+  onChange,
+  onClose,
+}: {
+  entry: QueueEntry;
+  onChange: (servings: number) => void;
+  onClose: () => void;
+}) {
+  const base = entry.recipe.servings || entry.servingsPlanned || 2;
+  const presets = [
+    { label: '½×', value: Math.max(1, Math.round(base / 2)) },
+    { label: '1×', value: base },
+    { label: '2×', value: base * 2 },
+  ];
+  return (
+    <div className="sheet">
+      <div className="sheet-title">{entry.recipe.name}</div>
+      <div className="sheet-row">
+        <button
+          className="chip"
+          onClick={() => onChange(Math.max(1, entry.servingsPlanned - 1))}
+        >
+          −
+        </button>
+        <span className="sheet-value">×{entry.servingsPlanned} servings</span>
+        <button className="chip" onClick={() => onChange(entry.servingsPlanned + 1)}>
+          +
+        </button>
+        {presets.map((p) => (
+          <button
+            key={p.label}
+            className={`chip ${entry.servingsPlanned === p.value ? 'active' : ''}`}
+            onClick={() => onChange(p.value)}
+          >
+            {p.label}
+          </button>
+        ))}
+        <button className="chip" onClick={onClose}>
+          done
+        </button>
+      </div>
+      <div className="muted sheet-hint">recipe makes {base} — shopping amounts scale with this</div>
     </div>
   );
 }
@@ -193,6 +269,8 @@ export function Plan() {
   const [shopOpen, setShopOpen] = useState(false);
   const [horizon, setHorizon] = useState(7);
   const [dragging, setDragging] = useState<QueueEntry>();
+  const [slot, setSlot] = useState('dinner');
+  const [servingsFor, setServingsFor] = useState<string>();
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -201,23 +279,32 @@ export function Plan() {
 
   const refresh = () => setNonce((n) => n + 1);
   const lockedKeys = useMemo(() => new Set(queue?.lockedDayKeys ?? []), [queue]);
+
+  // Templates (unassigned) are slot-agnostic; the board shows only the active slot.
+  const slotEntries = useMemo(
+    () => (queue?.upcoming ?? []).filter((e) => e.slot === slot),
+    [queue, slot],
+  );
   const byDay = useMemo(() => {
     const m = new Map<string, QueueEntry[]>();
-    for (const e of queue?.upcoming ?? []) {
+    for (const e of slotEntries) {
       const k = keyOf(e.date!);
       const list = m.get(k);
       if (list) list.push(e);
       else m.set(k, [e]);
     }
     return m;
-  }, [queue]);
+  }, [slotEntries]);
+  const days = boardDays();
+  const firstKey = days[0]!.key;
+  const lastKey = days[BOARD_DAYS - 1]!.key;
+  const earlier = slotEntries.filter((e) => keyOf(e.date!) < firstKey);
+  const later = slotEntries.filter((e) => keyOf(e.date!) > lastKey);
   const allEntries = useMemo(
     () => [...(queue?.unassigned ?? []), ...(queue?.upcoming ?? [])],
     [queue],
   );
-  const later = (queue?.upcoming ?? []).filter(
-    (e) => keyOf(e.date!) > boardDays()[BOARD_DAYS - 1]!.key,
-  );
+  const servingsEntry = allEntries.find((e) => e.id === servingsFor);
 
   const run = async (fn: () => Promise<void>) => {
     setMsg(undefined);
@@ -237,17 +324,28 @@ export function Plan() {
     setDragging(undefined);
     const over = ev.over?.id;
     if (!entry || over == null) return;
-    let date: string | null;
-    if (over === 'unassigned') {
-      if (!entry.date) return;
-      date = null;
-    } else {
-      const k = String(over).replace(/^day:/, '');
-      if (entry.date && keyOf(entry.date) === k) return;
-      date = `${k}T12:00:00.000Z`;
-    }
+
     await run(async () => {
-      await api.patch(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}`, { date });
+      if (over === 'unassigned') {
+        // Scheduled tile dragged back to the shelf -> becomes a template.
+        if (!entry.date) return;
+        await api.patch(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}`, { date: null });
+      } else {
+        const k = String(over).replace(/^day:/, '');
+        const date = `${k}T12:00:00.000Z`;
+        if (!entry.date) {
+          // Template dropped on a day -> COPY: create a new entry, template stays.
+          await api.post(`/meal-plans/${entry.mealPlanId}/entries`, {
+            recipeId: entry.recipe.id,
+            date,
+            slot,
+            servingsPlanned: entry.servingsPlanned,
+          });
+        } else {
+          if (keyOf(entry.date) === k) return;
+          await api.patch(`/meal-plans/${entry.mealPlanId}/entries/${entry.id}`, { date });
+        }
+      }
       refresh();
     });
   }
@@ -259,13 +357,11 @@ export function Plan() {
     });
   }
 
-  async function duplicate(e: QueueEntry) {
+  async function setServings(e: QueueEntry, servings: number) {
     await run(async () => {
-      await api.post(`/meal-plans/${e.mealPlanId}/entries`, {
-        recipeId: e.recipe.id,
-        servingsPlanned: e.servingsPlanned,
+      await api.patch(`/meal-plans/${e.mealPlanId}/entries/${e.id}`, {
+        servingsPlanned: servings,
       });
-      setMsg(`Duplicated "${e.recipe.name}" to Unassigned — drag it onto a day.`);
       refresh();
     });
   }
@@ -274,7 +370,7 @@ export function Plan() {
     setBusy(true);
     await run(async () => {
       const plan = await api.post<{ entries: unknown[] }>('/meal-plans/generate', { days: 7 });
-      setMsg(`Queued meals — ${plan.entries.length} scheduled over the next 7 days.`);
+      setMsg(`Queued dinners — ${plan.entries.length} scheduled over the next 7 days.`);
       refresh();
     });
     setBusy(false);
@@ -289,12 +385,22 @@ export function Plan() {
       );
       setShopOpen(false);
       setMsg(
-        `List "${list.name}": ${list.items.length} items for ${list.lockedMeals} meal(s). Days locked — optimize in Shop.`,
+        `List "${list.name}": ${list.items.length} items for ${list.lockedMeals} meal(s) across all slots. Days locked.`,
       );
       refresh();
     });
     setBusy(false);
   }
+
+  const renderTile = (e: QueueEntry, isTemplate = false) => (
+    <MealTile
+      key={e.id}
+      entry={e}
+      isTemplate={isTemplate}
+      onRemove={() => remove(e)}
+      onServings={() => setServingsFor(servingsFor === e.id ? undefined : e.id)}
+    />
+  );
 
   return (
     <section className="page">
@@ -305,12 +411,24 @@ export function Plan() {
         </button>
       </div>
 
+      <div className="slot-tabs">
+        {SLOTS.map((s) => (
+          <button
+            key={s.id}
+            className={`slot-tab ${slot === s.id ? 'active' : ''}`}
+            onClick={() => setSlot(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
       <button className="btn shop-cta" onClick={() => setShopOpen(!shopOpen)}>
         🛒 I'm going to the grocery store
       </button>
       {shopOpen && (
         <div className="card shop-panel">
-          <div className="section-label">Shop how many days out?</div>
+          <div className="section-label">Shop how many days out? (covers every slot)</div>
           <div className="chips">
             {HORIZONS.map((h) => (
               <button
@@ -357,24 +475,27 @@ export function Plan() {
       )}
 
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <UnassignedShelf entries={queue?.unassigned ?? []}>
-          {(queue?.unassigned ?? []).map((e) => (
-            <MealTile key={e.id} entry={e} onRemove={() => remove(e)} onDuplicate={() => duplicate(e)} />
-          ))}
+        <UnassignedShelf empty={(queue?.unassigned ?? []).length === 0}>
+          {(queue?.unassigned ?? []).map((e) => renderTile(e, true))}
         </UnassignedShelf>
 
+        {earlier.length > 0 && (
+          <>
+            <div className="section-label">Earlier</div>
+            {earlier.map((e) => renderTile(e))}
+          </>
+        )}
+
         <div className="board">
-          {boardDays().map(({ key, date }) => (
+          {days.map(({ key, date }) => (
             <DayLane
               key={key}
               dayKey={key}
               date={date}
               locked={lockedKeys.has(key)}
-              entries={byDay.get(key) ?? []}
+              empty={(byDay.get(key) ?? []).length === 0}
             >
-              {(byDay.get(key) ?? []).map((e) => (
-                <MealTile key={e.id} entry={e} onRemove={() => remove(e)} onDuplicate={() => duplicate(e)} />
-              ))}
+              {(byDay.get(key) ?? []).map((e) => renderTile(e))}
             </DayLane>
           ))}
         </div>
@@ -382,25 +503,20 @@ export function Plan() {
         {later.length > 0 && (
           <>
             <div className="section-label">Later</div>
-            {later.map((e) => (
-              <div key={e.id} className="tile">
-                <div className="tile-body">
-                  <div className="tile-name">
-                    {keyOf(e.date!)} · {e.recipe.name}
-                  </div>
-                </div>
-                {!e.locked && (
-                  <button className="tile-btn tile-x" onClick={() => remove(e)}>
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))}
+            {later.map((e) => renderTile(e))}
           </>
         )}
 
         <DragOverlay>{dragging ? <TileGhost entry={dragging} /> : null}</DragOverlay>
       </DndContext>
+
+      {servingsEntry && (
+        <ServingsSheet
+          entry={servingsEntry}
+          onChange={(s) => setServings(servingsEntry, s)}
+          onClose={() => setServingsFor(undefined)}
+        />
+      )}
     </section>
   );
 }
