@@ -389,7 +389,7 @@ export function Plan() {
       }
       refresh();
     } catch (e) {
-      setPending({ copies: [], moves: {} }); // roll back the optimistic drop
+      setPending((p) => ({ copies: [], moves: {}, removed: p.removed })); // roll back the drop
       setMsg(e instanceof Error ? e.message : String(e));
     }
   }
