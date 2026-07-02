@@ -7,7 +7,7 @@ import {
   type KrogerConfig,
   type KrogerTokens,
 } from '@meals/ingestion';
-import { matchLine, normalizeName, toBaseQuantity, parseIngredientLine } from '@meals/core';
+import { similarity, normalizeName, toBaseQuantity, parseIngredientLine } from '@meals/core';
 import { env } from '../env.js';
 
 export function krogerConfig(): KrogerConfig | null {
@@ -130,70 +130,83 @@ export async function syncPrices(
       continue;
     }
 
-    // Best catalog hit for this canonical item (fuzzy over description; cheapest tie-break).
-    const match = matchLine(
-      item.name,
-      products.map((p) => ({ productId: p.upc, text: `${p.brand ?? ''} ${p.description}`.trim() })),
-    );
-    const chosen =
-      products.find((p) => p.upc === match.productId && match.decision !== 'new') ??
-      products.filter((p) => p.regular != null).sort((a, b) => (a.regular ?? 9e9) - (b.regular ?? 9e9))[0];
-    if (!chosen || chosen.regular == null) {
+    // Keep ALL plausible size variants — bigger packs are often cheaper per unit, and the
+    // optimizer/costing pick the right size per need. Variants gate on fuzzy similarity to
+    // the item name; if none pass we fall back to the single best match (old behavior).
+    const scored = products
+      .filter((p) => p.regular != null)
+      .map((p) => ({
+        p,
+        sim: similarity(item.name, `${p.brand ?? ''} ${p.description}`.trim()),
+      }))
+      .sort((a, b) => b.sim - a.sim);
+    let variants = scored.filter((x) => x.sim >= 0.55).map((x) => x.p);
+    if (!variants.length && scored.length) variants = [scored[0]!.p];
+    if (!variants.length) {
       result.unmatched.push(item.name);
       continue;
     }
+    variants = variants.slice(0, 5); // cap junk
 
-    const parsedSize = chosen.size ? parseIngredientLine(chosen.size) : null;
-    const base =
-      parsedSize?.quantity && parsedSize.unit
-        ? toBaseQuantity(parsedSize.quantity, parsedSize.unit)
-        : null;
+    for (const chosen of variants) {
+      const parsedSize = chosen.size ? parseIngredientLine(chosen.size) : null;
+      const base =
+        parsedSize?.quantity && parsedSize.unit
+          ? toBaseQuantity(parsedSize.quantity, parsedSize.unit)
+          : null;
 
-    const product = await prisma.providerProduct.upsert({
-      where: { providerId_upc: { providerId: provider.id, upc: chosen.upc } },
-      create: {
-        providerId: provider.id,
-        canonicalItemId: item.id,
-        rawName: chosen.description,
-        brand: chosen.brand,
-        sizeText: chosen.size,
-        baseQuantity: base ? base.baseQuantity.toString() : undefined,
-        upc: chosen.upc,
-      },
-      update: { canonicalItemId: item.id, rawName: chosen.description, sizeText: chosen.size },
-    });
-    result.productsUpserted++;
+      const product = await prisma.providerProduct.upsert({
+        where: { providerId_upc: { providerId: provider.id, upc: chosen.upc } },
+        create: {
+          providerId: provider.id,
+          canonicalItemId: item.id,
+          rawName: chosen.description,
+          brand: chosen.brand,
+          sizeText: chosen.size,
+          baseQuantity: base ? base.baseQuantity.toString() : undefined,
+          upc: chosen.upc,
+        },
+        update: {
+          canonicalItemId: item.id,
+          rawName: chosen.description,
+          sizeText: chosen.size,
+          baseQuantity: base ? base.baseQuantity.toString() : undefined,
+        },
+      });
+      result.productsUpserted++;
 
-    const effective = chosen.promo ?? chosen.regular;
-    await prisma.priceObservation.create({
-      data: {
-        providerProductId: product.id,
-        price: effective.toFixed(2),
-        pricePerBaseUnit: base && base.baseQuantity > 0 ? (effective / base.baseQuantity).toFixed(6) : undefined,
-        isDeal: chosen.promo != null,
-        regularPrice: chosen.promo != null ? chosen.regular.toFixed(2) : undefined,
-        validTo: new Date(Date.now() + 7 * 86_400_000), // refresh weekly; promos change with the ad cycle
-        source: PriceSource.SCRAPE,
-        rawText: `${chosen.description} ${chosen.size ?? ''}`.trim(),
-      },
-    });
-    result.pricesRecorded++;
+      const effective = chosen.promo ?? chosen.regular!;
+      await prisma.priceObservation.create({
+        data: {
+          providerProductId: product.id,
+          price: effective.toFixed(2),
+          pricePerBaseUnit:
+            base && base.baseQuantity > 0 ? (effective / base.baseQuantity).toFixed(6) : undefined,
+          isDeal: chosen.promo != null,
+          regularPrice: chosen.promo != null ? chosen.regular!.toFixed(2) : undefined,
+          validTo: new Date(Date.now() + 7 * 86_400_000), // refresh weekly with the ad cycle
+          source: PriceSource.SCRAPE,
+          rawText: `${chosen.description} ${chosen.size ?? ''}`.trim(),
+        },
+      });
+      result.pricesRecorded++;
 
-    // Persist the alias so receipt OCR lines auto-match this product too.
-    await prisma.productAlias.upsert({
-      where: {
-        providerId_normalizedRawName: {
+      // Persist the alias so receipt OCR lines auto-match this product too.
+      await prisma.productAlias.upsert({
+        where: {
+          providerId_normalizedRawName: {
+            providerId: provider.id,
+            normalizedRawName: normalizeName(chosen.description),
+          },
+        },
+        create: {
           providerId: provider.id,
           normalizedRawName: normalizeName(chosen.description),
+          providerProductId: product.id,
         },
-      },
-      create: {
-        providerId: provider.id,
-        normalizedRawName: normalizeName(chosen.description),
-        providerProductId: product.id,
-      },
-      update: { providerProductId: product.id },
-    });
+        update: { providerProductId: product.id },
+      });
+    }
   }
   return result;
 }

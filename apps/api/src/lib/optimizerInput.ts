@@ -42,20 +42,27 @@ export async function buildOptimizerInput(
   const optProviders: OptimizerProvider[] = providers.map((p) => {
     const itemCosts: OptimizerProvider['itemCosts'] = {};
     for (const item of list.items) {
-      const product = p.products.find((pp) => pp.canonicalItemId === item.canonicalItemId);
-      const price = product?.prices[0];
-      if (!product || !price) continue;
-
-      const packBase = product.baseQuantity ? Number(product.baseQuantity) : 0;
-      const needed = Number(item.baseQuantityNeeded);
-      const units = packBase > 0 ? Math.ceil(needed / packBase) : 1;
-      // Deal price is already stored in `price.price`; multi-buy is applied as an effective
-      // unit price. A richer deal model (thresholds, loyalty) is Phase 2.
-      let unitPrice = Number(price.price);
-      if (price.multiBuyQty && price.multiBuyPrice && price.multiBuyQty > 0) {
-        unitPrice = Math.min(unitPrice, Number(price.multiBuyPrice) / price.multiBuyQty);
+      // A store may stock several SIZE VARIANTS of the item — evaluate each (buy whole
+      // packs to cover the need) and take the cheapest way to satisfy the quantity.
+      // Big packs win on unit price; small packs win when the need is small.
+      const variants = p.products.filter((pp) => pp.canonicalItemId === item.canonicalItemId);
+      let best: { productId: string; cost: number } | undefined;
+      for (const product of variants) {
+        const price = product.prices[0];
+        if (!price) continue;
+        const packBase = product.baseQuantity ? Number(product.baseQuantity) : 0;
+        const needed = Number(item.baseQuantityNeeded);
+        const units = packBase > 0 ? Math.ceil(needed / packBase) : 1;
+        // Deal price is already stored in `price.price`; multi-buy is applied as an
+        // effective unit price. A richer deal model (thresholds, loyalty) is Phase 2.
+        let unitPrice = Number(price.price);
+        if (price.multiBuyQty && price.multiBuyPrice && price.multiBuyQty > 0) {
+          unitPrice = Math.min(unitPrice, Number(price.multiBuyPrice) / price.multiBuyQty);
+        }
+        const cost = units * unitPrice;
+        if (!best || cost < best.cost) best = { productId: product.id, cost };
       }
-      itemCosts[item.id] = { productId: product.id, cost: units * unitPrice };
+      if (best) itemCosts[item.id] = best;
     }
     return {
       providerId: p.id,

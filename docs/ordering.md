@@ -92,3 +92,20 @@ pnpm --filter @meals/api exec tsx src/scripts/kroger-coupons.ts --clip-approved
 - The internal endpoints are unofficial and move occasionally; the script tries known
   variants and tells you how to add a new one if they all miss. Session state lives in
   storage/kroger-web-state.json (gitignored).
+
+## Costco (member digital receipts — real warehouse prices)
+
+Costco has no API, and costco.com catalog prices carry an online premium (≠ shelf prices),
+so catalog scraping would misprice Costco in the optimizer. Instead, members' in-warehouse
+purchases are available as structured digital receipts under "Orders & Purchases" — item
+numbers, descriptions, and the actual prices paid:
+
+```bash
+pnpm --filter @meals/api exec tsx src/scripts/costco-receipts.ts --login   # once, headed
+pnpm --filter @meals/api exec tsx src/scripts/costco-receipts.ts --months 6
+```
+
+Item numbers become Costco product SKUs; confident description matches auto-link to
+canonical items (Costco abbreviations are rough — unlinked products still record prices and
+link later). Prices get 60-day validity (warehouse prices move slowly). Bulk pack economics
+are handled by the optimizer's size-variant math. Not modeled: the membership fee.

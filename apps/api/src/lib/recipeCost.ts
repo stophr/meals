@@ -17,7 +17,11 @@ export interface ItemPrice {
   isDeal: boolean;
 }
 
-/** Latest valid price per canonical item across a household's store products. */
+/**
+ * Best price per canonical item across a household's store products. Items usually have
+ * several SIZE VARIANTS synced; for costing we take the cheapest per-base-unit variant
+ * (bulk sizes — the proportional model assumes leftovers get used in later meals).
+ */
 export async function loadItemPrices(householdId: string): Promise<Map<string, ItemPrice>> {
   const rows = await prisma.$queryRaw<
     {
@@ -28,7 +32,7 @@ export async function loadItemPrices(householdId: string): Promise<Map<string, I
       packUnit: string | null;
     }[]
   >`
-    SELECT DISTINCT ON (pp."canonicalItemId")
+    SELECT DISTINCT ON (po."providerProductId")
       pp."canonicalItemId", po.price::text, po."isDeal", pp."baseQuantity"::text, pp."packUnit"
     FROM "PriceObservation" po
     JOIN "ProviderProduct" pp ON pp.id = po."providerProductId"
@@ -37,16 +41,30 @@ export async function loadItemPrices(householdId: string): Promise<Map<string, I
       AND pp."canonicalItemId" IS NOT NULL
       AND po."validFrom" <= now()
       AND (po."validTo" IS NULL OR po."validTo" >= now())
-    ORDER BY pp."canonicalItemId", po."observedAt" DESC`;
+    ORDER BY po."providerProductId", po."observedAt" DESC`;
 
   const map = new Map<string, ItemPrice>();
   for (const r of rows) {
-    map.set(r.canonicalItemId, {
+    const candidate: ItemPrice = {
       price: Number(r.price),
       packBase: r.baseQuantity ? Number(r.baseQuantity) : null,
       packDim: r.packUnit ? dimensionOf(r.packUnit as Unit) : null,
       isDeal: r.isDeal,
-    });
+    };
+    const existing = map.get(r.canonicalItemId);
+    if (!existing) {
+      map.set(r.canonicalItemId, candidate);
+      continue;
+    }
+    // Prefer the variant with the lowest per-base-unit price; sized beats unsized.
+    const unit = (p: ItemPrice) => (p.packBase && p.packBase > 0 ? p.price / p.packBase : null);
+    const cu = unit(candidate);
+    const eu = unit(existing);
+    if ((cu != null && eu == null) || (cu != null && eu != null && cu < eu)) {
+      map.set(r.canonicalItemId, candidate);
+    } else if (cu == null && eu == null && candidate.price < existing.price) {
+      map.set(r.canonicalItemId, candidate);
+    }
   }
   return map;
 }
