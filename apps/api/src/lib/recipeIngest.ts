@@ -1,7 +1,15 @@
 import { prisma } from '@meals/db';
 import type { Recipe } from '@meals/db';
-import { parseIngredientLine, complexityOf, matchLine, toBaseQuantity } from '@meals/core';
+import {
+  parseIngredientLine,
+  complexityOf,
+  matchLine,
+  toBaseQuantity,
+  ingredientKey,
+} from '@meals/core';
 import type { NormalizedRecipe } from '@meals/ingestion';
+
+const normAlias = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 // Turn a NormalizedRecipe (from JSON-LD import or TheMealDB discovery) into DB rows:
 // parse each free-text ingredient line, auto-link to canonical items where the fuzzy match
@@ -28,12 +36,20 @@ export async function ingestRecipe(
     productId: i.id, // matcher field name; holds the canonical item id here
     text: `${i.brand ?? ''} ${i.name}`.trim(),
   }));
+  // Alias index: an exact/root alias hit is more reliable than fuzzy matching and keeps
+  // imports resolving to consolidated roots instead of re-introducing variants.
+  const aliasRows = await prisma.ingredientAlias.findMany({
+    where: { householdId },
+    select: { rawName: true, canonicalItemId: true },
+  });
+  const aliasMap = new Map(aliasRows.map((a) => [a.rawName, a.canonicalItemId]));
 
   const parsed = normalized.ingredientLines.map((line) => {
     const p = parseIngredientLine(line);
-    // Auto-link only on high-confidence fuzzy matches; anything else stays free-text.
-    const match = candidates.length ? matchLine(p.name, candidates) : null;
-    const canonicalItemId = match?.decision === 'auto' ? match.productId : null;
+    // 1) alias by the parsed name or its deterministic root; 2) fall back to fuzzy match.
+    const aliasHit = aliasMap.get(normAlias(p.name)) ?? aliasMap.get(ingredientKey(p.name));
+    const match = !aliasHit && candidates.length ? matchLine(p.name, candidates) : null;
+    const canonicalItemId = aliasHit ?? (match?.decision === 'auto' ? match.productId : null);
 
     const quantity = p.quantity ?? 1;
     const unit = p.unit ?? 'EACH';

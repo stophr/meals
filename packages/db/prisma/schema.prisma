@@ -107,6 +107,7 @@ model Household {
   jobs           IngestionJob[]
   integrationTokens IntegrationToken[]
   krogerCoupons  KrogerCoupon[]
+  ingredientAliases IngredientAlias[]
 }
 
 // Row exists now so FKs are stable; auth is deferred to Phase 3.
@@ -166,9 +167,28 @@ model CanonicalItem {
   recipeIngredients RecipeIngredient[]
   inventory         InventoryLot[]
   shoppingListItems ShoppingListItem[]
+  ingredientAliases IngredientAlias[]
 
   @@index([householdId, normKey])
   @@index([householdId, name])
+}
+
+// Maps a messy ingredient name ("packed dark brown sugar", "pinch of sugar") to the buyable
+// canonical item, so refining/consolidating the corpus never breaks recipes and future
+// imports resolve to the right root instead of spawning yet another variant.
+model IngredientAlias {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  rawName         String // normalized (lowercased) alias
+  canonicalItemId String
+  canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([householdId, rawName])
+  @@index([canonicalItemId])
 }
 
 model Provider {

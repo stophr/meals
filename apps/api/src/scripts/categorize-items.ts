@@ -37,13 +37,16 @@ async function main() {
   const baseUrl = arg('--llm-base-url') ?? 'http://localhost:11434/v1';
   const model = arg('--llm-model') ?? 'qwen2.5:7b';
   const limit = Number(arg('--limit') ?? Infinity);
+  // --all re-categorizes EVERY item (fixes wrong categories like sugar-in-Beverages), not
+  // just the ones missing a category.
+  const all = process.argv.includes('--all');
 
   const items = await prisma.canonicalItem.findMany({
-    where: { category: null },
+    where: all ? {} : { category: null },
     select: { id: true, name: true },
     take: limit === Infinity ? undefined : limit,
   });
-  console.log(`${items.length} uncategorized items; model ${model} @ ${baseUrl}`);
+  console.log(`${items.length} item(s) to categorize (${all ? 'all' : 'uncategorized only'}); model ${model} @ ${baseUrl}`);
 
   const BATCH = 60;
   let done = 0;

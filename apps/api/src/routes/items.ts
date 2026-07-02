@@ -8,42 +8,65 @@ import {
 } from '@meals/shared';
 import { buildNormKey, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
+import { resolveCanonicalItem } from '../lib/resolveItem.js';
 
 export async function itemRoutes(app: FastifyInstance) {
-  // Catalog autocomplete / list.
+  // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface
+  // first — typing "sugar" returns "Sugar" ahead of "Brown Sugar", "Demerara Sugar", etc.
   app.get('/items', async (req) => {
     const household = await getHousehold();
     const { q } = req.query as { q?: string };
-    return prisma.canonicalItem.findMany({
-      where: {
-        householdId: household.id,
-        ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
-      },
-      orderBy: { name: 'asc' },
-      take: 50,
+    if (!q) {
+      return prisma.canonicalItem.findMany({
+        where: { householdId: household.id },
+        orderBy: { name: 'asc' },
+        take: 50,
+      });
+    }
+    const matches = await prisma.canonicalItem.findMany({
+      where: { householdId: household.id, name: { contains: q, mode: 'insensitive' } },
+      take: 200,
     });
+    const ids = matches.map((m) => m.id);
+    const useRows = ids.length
+      ? await prisma.recipeIngredient.groupBy({
+          by: ['canonicalItemId'],
+          where: { canonicalItemId: { in: ids } },
+          _count: true,
+        })
+      : [];
+    const uses = new Map(useRows.map((u) => [u.canonicalItemId as string, u._count]));
+    const ql = q.trim().toLowerCase();
+    const rank = (name: string) => {
+      const n = name.toLowerCase();
+      if (n === ql) return 3;
+      if (n.startsWith(ql)) return 2;
+      if (new RegExp(`\\b${ql.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(n)) return 1;
+      return 0;
+    };
+    matches.sort(
+      (a, b) =>
+        rank(b.name) - rank(a.name) ||
+        (uses.get(b.id) ?? 0) - (uses.get(a.id) ?? 0) ||
+        a.name.length - b.name.length ||
+        a.name.localeCompare(b.name),
+    );
+    return matches.slice(0, 50);
   });
 
   app.post('/items', async (req, reply) => {
     const data = canonicalItemCreateSchema.parse(req.body);
     const household = await getHousehold();
     const base = data.baseUnit ? toBaseQuantity(1, data.baseUnit) : undefined;
-    reply.code(201);
-    return prisma.canonicalItem.create({
-      data: {
-        householdId: household.id,
-        name: data.name,
-        brand: data.brand,
-        category: data.category,
-        packSize: data.packSize?.toString(),
-        packUnit: data.packUnit,
-        baseUnit: data.baseUnit,
-        baseDimension: base?.dimension,
-        recipeUnit: data.recipeUnit,
-        purchaseUnit: data.purchaseUnit,
-        normKey: buildNormKey(data.name, data.brand),
-      },
+    // Resolve via the alias index first so "Pinch Of Sugar" returns the existing "Sugar"
+    // instead of spawning another variant.
+    const resolved = await resolveCanonicalItem(household.id, data.name, {
+      category: data.category,
+      baseUnit: data.baseUnit,
+      baseDimension: base?.dimension,
     });
+    reply.code(resolved.created ? 201 : 200);
+    return prisma.canonicalItem.findUniqueOrThrow({ where: { id: resolved.id } });
   });
 
   app.patch('/items/:id', async (req) => {
