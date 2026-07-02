@@ -74,6 +74,12 @@ enum JobStatus {
   FAILED
 }
 
+enum Complexity {
+  EASY
+  MEDIUM
+  HARD
+}
+
 // ---------------------------------------------------------------------------
 // Household / users
 // ---------------------------------------------------------------------------
@@ -272,6 +278,22 @@ model Recipe {
   sourceUrl    String?
   prepMinutes  Int?
 
+  // Catalog metadata (populated by ingestion; editable by the user).
+  sourceName String? // e.g. "TheMealDB", "allrecipes.com"
+  externalId String? // provider-specific id for dedup (e.g. TheMealDB idMeal)
+  imageUrl   String?
+  cuisine    String? // "ethnicity" facet, e.g. Italian, Thai
+  category   String? // e.g. Dessert, Breakfast, Pasta
+  tags       String[] @default([])
+  complexity Complexity?
+
+  // External stars (from the source site) vs local signals.
+  externalRating      Float? // 0..5
+  externalRatingCount Int?
+  isFavorite          Boolean   @default(false)
+  timesCooked         Int       @default(0)
+  lastCookedAt        DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -279,6 +301,10 @@ model Recipe {
   mealPlanEntries MealPlanEntry[]
 
   @@index([householdId])
+  @@index([householdId, cuisine])
+  @@index([householdId, category])
+  @@index([householdId, isFavorite])
+  @@index([householdId, externalId])
 }
 
 model RecipeIngredient {

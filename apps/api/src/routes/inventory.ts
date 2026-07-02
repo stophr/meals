@@ -3,6 +3,7 @@ import { prisma } from '@meals/db';
 import { inventoryCreateSchema, inventoryUpdateSchema, inventoryConsumeSchema } from '@meals/shared';
 import { toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
+import { consumeFromInventory } from '../lib/inventory.js';
 
 export async function inventoryRoutes(app: FastifyInstance) {
   app.get('/inventory', async () => {
@@ -54,34 +55,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   app.post('/inventory/consume', async (req) => {
     const data = inventoryConsumeSchema.parse(req.body);
     const household = await getHousehold();
-    let remaining = toBaseQuantity(data.quantity, data.unit).baseQuantity;
-
-    const lots = await prisma.inventoryLot.findMany({
-      where: { householdId: household.id, canonicalItemId: data.canonicalItemId },
-      orderBy: [{ expiresAt: 'asc' }, { purchasedAt: 'asc' }],
-    });
-
-    const consumed: string[] = [];
-    for (const lot of lots) {
-      if (remaining <= 0) break;
-      const lotBase = Number(lot.baseQuantity);
-      if (lotBase <= remaining) {
-        remaining -= lotBase;
-        await prisma.inventoryLot.delete({ where: { id: lot.id } });
-        consumed.push(lot.id);
-      } else {
-        const left = lotBase - remaining;
-        const ratio = left / lotBase;
-        await prisma.inventoryLot.update({
-          where: { id: lot.id },
-          data: {
-            baseQuantity: left.toString(),
-            quantity: (Number(lot.quantity) * ratio).toString(),
-          },
-        });
-        remaining = 0;
-      }
-    }
-    return { consumedLotIds: consumed, shortfallBase: Math.max(0, remaining) };
+    const base = toBaseQuantity(data.quantity, data.unit).baseQuantity;
+    return consumeFromInventory(household.id, data.canonicalItemId, base);
   });
 }

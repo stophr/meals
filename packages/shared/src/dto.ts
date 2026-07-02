@@ -96,6 +96,37 @@ export const recipeUpdateSchema = recipeCreateSchema.partial();
 export type RecipeCreate = z.infer<typeof recipeCreateSchema>;
 export type RecipeIngredientInput = z.infer<typeof recipeIngredientInputSchema>;
 
+// ---- Recipe catalog: search / import / discover / favorite / cook ----
+export const recipeSortOptions = ['name', 'rating', 'popular', 'newest', 'complexity'] as const;
+export const recipeQuerySchema = z.object({
+  q: z.string().optional(), // matches name, tags, and ingredient names
+  cuisine: z.string().optional(),
+  category: z.string().optional(),
+  tag: z.string().optional(),
+  complexity: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
+  favorite: z.coerce.boolean().optional(),
+  cookable: z.coerce.boolean().optional(), // only recipes fully coverable from the pantry
+  sort: z.enum(recipeSortOptions).default('name'),
+  take: z.coerce.number().int().positive().max(200).default(50),
+  skip: z.coerce.number().int().nonnegative().default(0),
+});
+export type RecipeQuery = z.infer<typeof recipeQuerySchema>;
+
+export const recipeImportSchema = z.object({ url: z.string().url() });
+export const discoverIngestSchema = z.object({ externalId: z.string().min(1) });
+export const cookRecipeSchema = z.object({
+  servings: z.number().int().positive().optional(), // defaults to the recipe's servings
+});
+
+/** Pantry coverage for one recipe, computed against current inventory. */
+export interface RecipeCoverage {
+  requiredCount: number; // linked, non-optional ingredients
+  satisfiedCount: number; // of those, how many the pantry fully covers
+  missing: { name: string; neededBase: number; haveBase: number }[];
+  unlinkedCount: number; // free-text ingredients we can't verify against the pantry
+  cookable: boolean; // all linked ingredients satisfied (and at least one linked)
+}
+
 // ---- Inventory ----
 export const inventoryCreateSchema = z.object({
   canonicalItemId: cuid,

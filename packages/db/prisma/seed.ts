@@ -130,6 +130,10 @@ async function main() {
       servings: 4,
       prepMinutes: 20,
       instructions: 'Mix, whisk, cook on griddle.',
+      cuisine: 'American',
+      category: 'Breakfast',
+      tags: ['quick', 'kid-friendly'],
+      complexity: 'EASY',
       ingredients: {
         create: [
           { canonicalItemId: flour.id, quantity: '300', unit: Unit.G, baseQuantity: '300' },
