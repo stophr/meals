@@ -645,6 +645,57 @@ select.chip {
   opacity: 0.75;
 }
 
+/* --- pantry --- */
+.add-card {
+  margin-bottom: 12px;
+}
+.autocomplete {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.autocomplete-row {
+  text-align: left;
+  background: var(--card);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+.autocomplete-row:last-child {
+  border-bottom: none;
+}
+.autocomplete-row:active {
+  background: var(--green-light);
+}
+.autocomplete-new {
+  color: var(--green);
+  font-weight: 600;
+}
+.add-amount-row {
+  margin-top: 10px;
+}
+.sheet-input {
+  width: 90px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1rem;
+  text-align: center;
+}
+.pantry-list {
+  margin-bottom: 14px;
+}
+.pantry-list li {
+  padding: 4px 0;
+}
+.badge-expired {
+  background: var(--danger);
+}
+
 /* --- meal plan entries --- */
 .plan-entries {
   list-style: none;

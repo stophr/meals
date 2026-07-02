@@ -20,6 +20,11 @@ const envSchema = z.object({
   OCR_MODEL: z.string().default('claude-sonnet-5'),
   OCR_ESCALATION_MODEL: z.string().default('claude-opus-4-8'),
 
+  // Kroger/Fry's integration (developer.kroger.com app credentials).
+  KROGER_CLIENT_ID: z.string().default(''),
+  KROGER_CLIENT_SECRET: z.string().default(''),
+  KROGER_REDIRECT_URI: z.string().default('http://localhost:8090/api/integrations/kroger/callback'),
+
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
 });

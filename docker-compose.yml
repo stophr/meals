@@ -31,6 +31,9 @@ services:
       OCR_LOCAL_BASE_URL: ${OCR_LOCAL_BASE_URL:-http://host.docker.internal:11434/v1}
       OCR_LOCAL_MODEL: ${OCR_LOCAL_MODEL:-qwen2.5vl:3b}
       OCR_LOCAL_API_KEY: ${OCR_LOCAL_API_KEY:-}
+      KROGER_CLIENT_ID: ${KROGER_CLIENT_ID:-}
+      KROGER_CLIENT_SECRET: ${KROGER_CLIENT_SECRET:-}
+      KROGER_REDIRECT_URI: ${KROGER_REDIRECT_URI:-http://localhost:8090/api/integrations/kroger/callback}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OCR_MODEL: ${OCR_MODEL:-claude-sonnet-5}
       OCR_ESCALATION_MODEL: ${OCR_ESCALATION_MODEL:-claude-opus-4-8}

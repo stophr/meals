@@ -105,6 +105,7 @@ model Household {
   mealPlans      MealPlan[]
   shoppingLists  ShoppingList[]
   jobs           IngestionJob[]
+  integrationTokens IntegrationToken[]
 }
 
 // Row exists now so FKs are stable; auth is deferred to Phase 3.
@@ -175,6 +176,9 @@ model Provider {
   travelMinutes Int?
   travelKm      Float?
 
+  // Store-chain integration config, e.g. {"type":"kroger","locationId":"70100135"}.
+  integration Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -182,6 +186,25 @@ model Provider {
   aliases  ProductAlias[]
 
   @@index([householdId])
+}
+
+// OAuth tokens for store integrations (e.g. the Kroger user token that authorizes cart
+// pushes). One row per household+provider-kind.
+model IntegrationToken {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  kind         String // "kroger"
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  scopes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, kind])
 }
 
 model ProviderProduct {
