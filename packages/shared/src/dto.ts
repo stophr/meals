@@ -255,13 +255,26 @@ export const costcoImportSchema = z.object({
 });
 export type CostcoImport = z.infer<typeof costcoImportSchema>;
 
-/** Mobile quick price capture: type the price you see at a store for one item. */
+/** Mobile quick price capture: type/paste the price you see at a store for one item. */
 export const quickPriceSchema = z.object({
   canonicalItemId: cuid,
   price: z.number().positive(),
   size: z.string().optional(), // e.g. "4 lb", "2 L" — enables proportional costing
+  brand: z.string().optional(),
 });
 export type QuickPrice = z.infer<typeof quickPriceSchema>;
+
+/** Parse one pasted product blurb into brand/size/price for a known item. */
+export const parsePriceOneSchema = z.object({
+  text: z.string().min(1).max(5000),
+  itemName: z.string().optional(), // context: what the product is
+});
+export const parsedPriceOneSchema = z.object({
+  brand: z.string().optional(),
+  size: z.string().optional(),
+  price: z.number().positive().optional(),
+});
+export type ParsedPriceOne = z.infer<typeof parsedPriceOneSchema>;
 
 /** Free-form paste → LLM parses into {name, size, price} rows. */
 export const parsePricesSchema = z.object({ text: z.string().min(1).max(20000) });

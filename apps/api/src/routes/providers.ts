@@ -39,7 +39,7 @@ export async function providerRoutes(app: FastifyInstance) {
   // One "manual" product per item per provider; optional size enables proportional costing.
   app.post('/providers/:id/quick-price', async (req) => {
     const { id } = req.params as { id: string };
-    const { canonicalItemId, price, size } = quickPriceSchema.parse(req.body);
+    const { canonicalItemId, price, size, brand } = quickPriceSchema.parse(req.body);
     const item = await prisma.canonicalItem.findUniqueOrThrow({ where: { id: canonicalItemId } });
     const parsed = size ? parseIngredientLine(size) : null;
     const base =
@@ -52,11 +52,16 @@ export async function providerRoutes(app: FastifyInstance) {
         providerId: id,
         canonicalItemId,
         rawName: item.name,
+        brand,
         sizeText: size,
         baseQuantity: base ? base.baseQuantity.toString() : undefined,
         upc,
       },
-      update: { sizeText: size, baseQuantity: base ? base.baseQuantity.toString() : undefined },
+      update: {
+        brand,
+        sizeText: size,
+        baseQuantity: base ? base.baseQuantity.toString() : undefined,
+      },
     });
     await prisma.priceObservation.create({
       data: {

@@ -10,7 +10,13 @@ import {
   safewaySearchLinks,
 } from '@meals/ingestion';
 import { z } from 'zod';
-import { costcoImportSchema, parsePricesSchema, parsedPriceSchema } from '@meals/shared';
+import {
+  costcoImportSchema,
+  parsePricesSchema,
+  parsedPriceSchema,
+  parsePriceOneSchema,
+  parsedPriceOneSchema,
+} from '@meals/shared';
 import { chatJson } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices } from '../lib/kroger.js';
@@ -262,6 +268,37 @@ export async function integrationRoutes(app: FastifyInstance) {
         message:
           err instanceof Error && /HTTP|fetch|ECONN|timeout/i.test(err.message)
             ? 'Local LLM unreachable — is Ollama running and bound to 0.0.0.0? (see docs/local-ocr.md)'
+            : `Parse failed: ${err instanceof Error ? err.message : err}`,
+      };
+    }
+  });
+
+  // Parse ONE pasted product blurb into brand/size/price (name is already known — the list
+  // item). Used by the shopping-list "check price" capture.
+  app.post('/integrations/parse-price-one', async (req, reply) => {
+    const { text, itemName } = parsePriceOneSchema.parse(req.body);
+    try {
+      const raw = await chatJson({
+        baseUrl: env.OCR_LOCAL_BASE_URL,
+        model: env.LLM_MODEL,
+        apiKey: env.OCR_LOCAL_API_KEY || undefined,
+        system:
+          'You extract product attributes from a pasted grocery product description. Return ' +
+          'JSON {"brand","size","price"}: brand = the manufacturer/brand name only (e.g. ' +
+          '"Kirkland Signature", "Great Value") NOT the food type; size = pack/quantity text ' +
+          '(e.g. "4 lb", "2 L", "24 ct") if present; price = the dollar amount as a number. ' +
+          'Omit a field if not present.',
+        prompt: itemName ? `Item: ${itemName}\n\n${text}` : text,
+        maxTokens: 500,
+        timeoutMs: 60000,
+      });
+      return parsedPriceOneSchema.parse(raw);
+    } catch (err) {
+      reply.code(502);
+      return {
+        message:
+          err instanceof Error && /HTTP|fetch|ECONN|timeout/i.test(err.message)
+            ? 'Local LLM unreachable — is Ollama running and bound to 0.0.0.0?'
             : `Parse failed: ${err instanceof Error ? err.message : err}`,
       };
     }

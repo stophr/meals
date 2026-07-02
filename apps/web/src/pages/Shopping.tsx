@@ -52,7 +52,32 @@ function PriceCapture({
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
   const [price, setPrice] = useState('');
   const [size, setSize] = useState('');
+  const [brand, setBrand] = useState('');
+  const [paste, setPaste] = useState('');
   const [busy, setBusy] = useState(false);
+  const [parsing, setParsing] = useState(false);
+
+  async function parse() {
+    if (!paste.trim()) return;
+    setParsing(true);
+    try {
+      const r = await api.post<{ brand?: string; size?: string; price?: number; message?: string }>(
+        '/integrations/parse-price-one',
+        { text: paste, itemName: item.canonicalItem.name },
+      );
+      if (r.message) {
+        onSaved(r.message);
+      } else {
+        if (r.brand) setBrand(r.brand);
+        if (r.size) setSize(r.size);
+        if (r.price != null) setPrice(String(r.price));
+      }
+    } catch (e) {
+      onSaved(e instanceof Error ? e.message : String(e));
+    } finally {
+      setParsing(false);
+    }
+  }
 
   async function save() {
     if (!providerId || !price) return;
@@ -62,11 +87,14 @@ function PriceCapture({
         canonicalItemId: item.canonicalItemId,
         price: Number(price),
         size: size.trim() || undefined,
+        brand: brand.trim() || undefined,
       });
       const store = providers.find((p) => p.id === providerId)?.name ?? 'store';
       onSaved(`Saved $${Number(price).toFixed(2)} for ${item.canonicalItem.name} at ${store}.`);
       setPrice('');
       setSize('');
+      setBrand('');
+      setPaste('');
     } finally {
       setBusy(false);
     }
@@ -94,6 +122,18 @@ function PriceCapture({
         })}
       </div>
       <div className="capture-row">
+        <textarea
+          className="paste-box"
+          rows={2}
+          placeholder="Paste product description here, then Parse…"
+          value={paste}
+          onChange={(e) => setPaste(e.target.value)}
+        />
+        <button className="btn btn-inline" disabled={parsing || !paste.trim()} onClick={parse}>
+          {parsing ? '…' : '✨ Parse'}
+        </button>
+      </div>
+      <div className="capture-row">
         <select className="chip" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
           {providers.map((p) => (
             <option key={p.id} value={p.id}>
@@ -102,18 +142,24 @@ function PriceCapture({
           ))}
         </select>
         <input
+          className="size-input"
+          placeholder="brand"
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+        />
+        <input
+          className="size-input"
+          placeholder="size"
+          value={size}
+          onChange={(e) => setSize(e.target.value)}
+        />
+        <input
           className="price-input"
           type="number"
           inputMode="decimal"
           placeholder="$ price"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
-        />
-        <input
-          className="size-input"
-          placeholder="size?"
-          value={size}
-          onChange={(e) => setSize(e.target.value)}
         />
         <button className="btn btn-inline" disabled={busy || !price} onClick={save}>
           Save
