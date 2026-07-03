@@ -84,9 +84,12 @@ enum Complexity {
 // Household / users
 // ---------------------------------------------------------------------------
 
+// The tenant. "Org" in the UI; the data-scope key (householdId) throughout. Each org holds
+// its own inventory, providers, prices, meal plans, shopping lists, substitutions, and users.
 model Household {
   id       String  @id @default(cuid())
   name     String
+  slug     String? @unique
   homeLat  Float?
   homeLng  Float?
   currency String  @default("USD")
@@ -108,18 +111,75 @@ model Household {
   integrationTokens IntegrationToken[]
   krogerCoupons  KrogerCoupon[]
   ingredientAliases IngredientAlias[]
+  substitutions  IngredientSubstitution[]
+  magicLinks     MagicLink[]
 }
 
 // Row exists now so FKs are stable; auth is deferred to Phase 3.
+// A member of an org. Roles: base (view the meal lineup), sous_chef (everything but managing
+// users), chef (everything incl. inviting/removing users). isAppAdmin (the app owner) can
+// invite new orgs. The first user to join an org becomes chef.
 model User {
   id          String    @id @default(cuid())
   householdId String
   household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
   email       String    @unique
   displayName String?
-  role        String    @default("owner")
+  role        String    @default("chef") // base | sous_chef | chef
+  isAppAdmin  Boolean   @default(false)
   createdAt   DateTime  @default(now())
 
+  sessions Session[]
+
+  @@index([householdId])
+}
+
+// Passwordless auth. A magic link is emailed; following it consumes the link and mints a
+// Session (device cache, ~3 months). Also used for org invites (carries householdId + role).
+// EMAIL DELIVERY IS STUBBED until the pantrezy.com domain is live — see docs/multi-tenancy.md.
+model MagicLink {
+  id           String     @id @default(cuid())
+  email        String
+  householdId  String?    // invite into this org; null = plain sign-in to an existing account
+  household    Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  intendedRole String?    // role granted when an invite is first accepted
+  token        String     @unique
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@index([email])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String   @unique
+  device     String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime // device cache window (3 months to start)
+
+  @@index([userId])
+}
+
+// A tenant-scoped ingredient swap. recipeId null = an org-global rule (e.g. always use
+// Avocado Oil for Olive Oil), remembered until reverted/changed; recipeId set = only that
+// recipe. Applied in coverage, costing, list-building, and recipe display.
+model IngredientSubstitution {
+  id                  String        @id @default(cuid())
+  householdId         String
+  household           Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromCanonicalItemId String
+  fromItem            CanonicalItem @relation("SubFrom", fields: [fromCanonicalItemId], references: [id], onDelete: Cascade)
+  toCanonicalItemId   String
+  toItem              CanonicalItem @relation("SubTo", fields: [toCanonicalItemId], references: [id], onDelete: Cascade)
+  recipeId            String?
+  recipe              Recipe?       @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  createdAt           DateTime      @default(now())
+
+  @@unique([householdId, fromCanonicalItemId, recipeId])
   @@index([householdId])
 }
 
@@ -168,6 +228,8 @@ model CanonicalItem {
   inventory         InventoryLot[]
   shoppingListItems ShoppingListItem[]
   ingredientAliases IngredientAlias[]
+  substitutionsFrom IngredientSubstitution[] @relation("SubFrom")
+  substitutionsTo   IngredientSubstitution[] @relation("SubTo")
 
   @@index([householdId, normKey])
   @@index([householdId, name])
@@ -348,8 +410,11 @@ model PriceObservation {
 
 model Recipe {
   id          String    @id @default(cuid())
+  // householdId = the org that added it (owner). Shared recipes form a GLOBAL directory
+  // visible to every org; a tenant's own private recipes have isShared=false.
   householdId String
   household   Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  isShared    Boolean   @default(true)
 
   name         String
   servings     Int      @default(1)
@@ -387,6 +452,7 @@ model Recipe {
   ingredients   RecipeIngredient[]
   mealPlanEntries MealPlanEntry[]
   mealRules       MealRule[]
+  substitutions   IngredientSubstitution[]
 
   @@index([householdId])
   @@index([householdId, cuisine])

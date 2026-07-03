@@ -4,6 +4,7 @@ import { dimensionOf } from '@meals/core';
 import { BASE_UNIT, reconcile } from '@meals/shared';
 import type { UnitDimension } from '@meals/shared';
 import { pantryLots } from './inventory.js';
+import { subMap, applySubs } from './substitutions.js';
 
 // Shared shopping-list builder: aggregate ingredients across meal entries (scaled by
 // servings), subtract pantry stock, materialize a ShoppingList. Used by both the legacy
@@ -34,10 +35,11 @@ export async function buildShoppingList(
     string,
     { itemId: string; base: number; dim: UnitDimension; unit: Unit; gramsPerMl: number | null; gramsPerEach: number | null }
   >();
+  const subs = await subMap(householdId); // org-global substitutions
   for (const entry of entries) {
     const servings = entry.recipe.servings || 1;
     const ratio = entry.servingsPlanned / servings;
-    for (const ing of entry.recipe.ingredients) {
+    for (const ing of applySubs(entry.recipe.ingredients, subs)) {
       if (!ing.canonicalItemId || ing.baseQuantity == null || ing.optional) continue;
       if (ing.canonicalItem?.assumeStocked) continue; // water/ice — assumed on hand
       const dim = ing.unit ? dimensionOf(ing.unit) : 'COUNT';

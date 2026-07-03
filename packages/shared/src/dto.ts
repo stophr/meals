@@ -271,6 +271,13 @@ export const shoppingListItemAddSchema = z.object({
   unit: unitSchema.default('EACH'),
 });
 export const archiveSchema = z.object({ archived: z.boolean().default(true) });
+
+// Ingredient substitution: recipeId omitted = org-global rule; set = only that recipe.
+export const substitutionCreateSchema = z.object({
+  fromCanonicalItemId: cuid,
+  toCanonicalItemId: cuid,
+  recipeId: cuid.optional(),
+});
 export type ShoppingListCreate = z.infer<typeof shoppingListCreateSchema>;
 
 // ---- Costco price import (bookmarklet paste) ----

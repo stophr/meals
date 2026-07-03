@@ -14,6 +14,7 @@ import { importRecipeFromUrl, searchMeals, getMeal } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { pantryLots, consumeFromInventory } from '../lib/inventory.js';
+import { subMap, applySubs } from '../lib/substitutions.js';
 import { ingestRecipe } from '../lib/recipeIngest.js';
 import {
   loadItemPrices,
@@ -100,17 +101,20 @@ export async function recipeRoutes(app: FastifyInstance) {
               ? [{ complexity: 'asc' }, { name: 'asc' }]
               : [{ name: 'asc' }];
 
-    const [pantry, prices] = await Promise.all([
+    const [pantry, prices, subs] = await Promise.all([
       pantryLots(household.id),
       loadItemPrices(household.id),
+      subMap(household.id), // org-global substitutions
     ]);
     const withCost = <T extends { ingredients: CostIngredient[]; servings: number }>(r: T) => {
-      const coverage = recipeCoverage(r.ingredients as never, pantry);
+      const ingredients = applySubs(r.ingredients as never[], subs) as typeof r.ingredients;
+      const coverage = recipeCoverage(ingredients as never, pantry);
       return {
         ...r,
+        ingredients,
         coverage,
         cookTonightCost: cookTonightCost(
-          r.ingredients,
+          ingredients,
           r.servings || 1,
           new Set(coverage.satisfiedItemIds ?? []),
           prices,
@@ -270,16 +274,19 @@ export async function recipeRoutes(app: FastifyInstance) {
       where: { id },
       include: { ingredients: { include: { canonicalItem: true } } },
     });
-    const [pantry, prices] = await Promise.all([
+    const [pantry, prices, subs] = await Promise.all([
       pantryLots(household.id),
       loadItemPrices(household.id),
+      subMap(household.id, id), // global + this-recipe substitutions
     ]);
-    const coverage = recipeCoverage(recipe.ingredients, pantry);
+    const ingredients = applySubs(recipe.ingredients, subs);
+    const coverage = recipeCoverage(ingredients, pantry);
     return {
       ...recipe,
+      ingredients,
       coverage,
       cookTonightCost: cookTonightCost(
-        recipe.ingredients,
+        ingredients,
         recipe.servings || 1,
         new Set(coverage.satisfiedItemIds ?? []),
         prices,

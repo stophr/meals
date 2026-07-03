@@ -31,6 +31,11 @@ const envSchema = z.object({
 
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
+
+  // Passwordless auth (magic links). EMAIL DELIVERY IS STUBBED until pantrezy.com is live.
+  WEB_BASE_URL: z.string().default('http://localhost:8090'),
+  SESSION_DAYS: z.coerce.number().default(90), // device cache window (~3 months)
+  MAGIC_LINK_MINUTES: z.coerce.number().default(20),
 });
 
 export const env = envSchema.parse(process.env);

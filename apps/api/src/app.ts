@@ -15,6 +15,8 @@ import { shoppingListRoutes } from './routes/shoppingLists.js';
 import { settingsRoutes } from './routes/settings.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { integrationRoutes } from './routes/integrations.js';
+import { substitutionRoutes } from './routes/substitutions.js';
+import { authRoutes } from './routes/auth.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: env.NODE_ENV !== 'test' });
@@ -48,6 +50,8 @@ export async function buildApp() {
   await app.register(settingsRoutes);
   await app.register(ingestRoutes);
   await app.register(integrationRoutes);
+  await app.register(substitutionRoutes);
+  await app.register(authRoutes);
 
   return app;
 }
