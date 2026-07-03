@@ -1,4 +1,4 @@
-// The "Costco → Meals" bookmarklet. Runs inside the user's own logged-in Costco tab (no
+// The "Costco → Pantrezy" bookmarklet. Runs inside the user's own logged-in Costco tab (no
 // automation, no bot detection), scrapes product prices, and copies them to the clipboard as
 // JSON to paste into the app. Best-effort DOM scraping — JSON-LD Product first (most robust),
 // then generic product tiles. May need tuning once we see Costco's live markup.
@@ -38,11 +38,11 @@ const SOURCE = `(function(){
       if(name&&pm)add(name,pm[1]);
     });
   }
-  if(!items.length){alert('Meals: no products found here. Open a Costco product page, search results, or Orders & Purchases.');return;}
+  if(!items.length){alert('Pantrezy: no products found here. Open a Costco product page, search results, or Orders & Purchases.');return;}
   var payload=JSON.stringify({source:'costco',items:items});
-  function ok(){alert('Meals: copied '+items.length+' item(s). In the app: Settings → Import Costco prices → paste.');}
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(payload).then(ok,function(){window.prompt('Copy this, paste into Meals:',payload);});}
-  else{window.prompt('Copy this, paste into Meals:',payload);}
+  function ok(){alert('Pantrezy: copied '+items.length+' item(s). In the app: Settings → Import Costco prices → paste.');}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(payload).then(ok,function(){window.prompt('Copy this, paste into Pantrezy:',payload);});}
+  else{window.prompt('Copy this, paste into Pantrezy:',payload);}
 })();`;
 
 /** The full javascript: URL to install as a bookmark. */

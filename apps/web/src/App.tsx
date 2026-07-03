@@ -13,7 +13,7 @@ function Header() {
   const online = data?.db === 'up';
   return (
     <header className="app-header">
-      <h1>Meals</h1>
+      <h1>Pantrezy</h1>
       <span className={`status-dot ${online ? 'ok' : 'down'}`} title={`API: ${data?.status ?? '…'}`} />
     </header>
   );

@@ -1,8 +1,8 @@
 {
-  "name": "meals",
+  "name": "pantrezy",
   "version": "0.0.0",
   "private": true,
-  "description": "Recipe-first household grocery planning with a time-vs-savings deal optimizer.",
+  "description": "Pantrezy — recipe-first household grocery planning with a time-vs-savings deal optimizer.",
   "packageManager": "pnpm@11.9.0",
   "engines": {
     "node": ">=22"

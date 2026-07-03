@@ -185,7 +185,7 @@ function CostcoImport() {
           Drag this to your bookmarks bar (desktop):{' '}
           {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
           <a ref={linkRef} className="bookmarklet" onClick={(e) => e.preventDefault()}>
-            🛒 Costco → Meals
+            🛒 Costco → Pantrezy
           </a>
         </li>
         <li>On costco.com — a product page, search results, or Orders &amp; Purchases — click it.</li>

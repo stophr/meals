@@ -8,8 +8,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Meals — Grocery Planner',
-        short_name: 'Meals',
+        name: 'Pantrezy — Grocery Planner',
+        short_name: 'Pantrezy',
         description: 'Recipe-first grocery planning with a time-vs-savings deal optimizer.',
         theme_color: '#166534',
         background_color: '#ffffff',

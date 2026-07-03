@@ -1,4 +1,4 @@
-# meals
+# Pantrezy
 
 Recipe-first household grocery planner with a **time-vs-savings** deal optimizer.
 Plan meals → generate a shopping list (minus pantry stock) → the optimizer picks which
