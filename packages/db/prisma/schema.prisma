@@ -432,6 +432,9 @@ model InventoryLot {
   unit         Unit
   baseQuantity Decimal  @db.Decimal(14, 4)
 
+  // What's physically on the shelf: brand is informational (the canonical item stays
+  // store-agnostic for recipe/coverage math).
+  brand       String?
   location    String?
   purchasedAt DateTime  @default(now())
   expiresAt   DateTime?

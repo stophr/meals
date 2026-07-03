@@ -35,6 +35,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
         quantity: data.quantity.toString(),
         unit: data.unit,
         baseQuantity: toBaseQuantity(data.quantity, data.unit).baseQuantity.toString(),
+        brand: data.brand,
         location: data.location,
         purchasedAt: data.purchasedAt,
         expiresAt: data.expiresAt,
@@ -73,7 +74,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
       model: env.LLM_MODEL,
       apiKey: env.OCR_LOCAL_API_KEY || undefined,
     };
-    let raw: { name: string; quantity: number; unit: string }[] = [];
+    let raw: { name: string; brand: string | null; quantity: number; unit: string }[] = [];
     try {
       if (data.source === 'text') {
         if (!data.text?.trim()) {
@@ -103,12 +104,20 @@ export async function inventoryRoutes(app: FastifyInstance) {
       reply.code(502);
       return { message: `Couldn't read that: ${e instanceof Error ? e.message : String(e)}` };
     }
-    // Normalize the model's free unit word to a real Unit.
-    const items = raw.map((i) => ({
-      name: i.name,
-      quantity: i.quantity,
-      unit: parseIngredientLine(`1 ${i.unit} x`).unit ?? 'EACH',
-    }));
+    // Normalize the model's free unit word to a real Unit. US volume words the enum lacks
+    // (gallon/quart/pint) are converted to L/ML — which also rescales the quantity.
+    const items = raw.map((i) => {
+      const w = i.unit.toLowerCase();
+      if (/\bgal(lon)?s?\b/.test(w)) return { name: i.name, brand: i.brand, quantity: i.quantity * 3.78541, unit: 'L' };
+      if (/\b(qt|quarts?)\b/.test(w)) return { name: i.name, brand: i.brand, quantity: i.quantity * 0.946353, unit: 'L' };
+      if (/\b(pt|pints?)\b/.test(w)) return { name: i.name, brand: i.brand, quantity: i.quantity * 473.176, unit: 'ML' };
+      return {
+        name: i.name,
+        brand: i.brand,
+        quantity: i.quantity,
+        unit: parseIngredientLine(`1 ${i.unit} x`).unit ?? 'EACH',
+      };
+    });
     return { items };
   });
 
@@ -127,6 +136,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
           quantity: it.quantity.toString(),
           unit: it.unit,
           baseQuantity: base.baseQuantity.toString(),
+          brand: it.brand ?? undefined,
         },
       });
       added++;

@@ -47,6 +47,7 @@ interface Lot {
   id: string;
   quantity: string;
   unit: string;
+  brand?: string | null;
   location?: string | null;
   expiresAt?: string | null;
   canonicalItem: {
@@ -95,6 +96,7 @@ function expiryBadge(expiresAt?: string | null) {
 export interface LotPatch {
   quantity: number;
   unit: string;
+  brand?: string | null;
   location?: string;
   expiresAt?: string;
 }
@@ -116,6 +118,7 @@ function LotSheet({
 }) {
   const [qty, setQty] = useState(Number(lot.quantity));
   const [unit, setUnit] = useState(lot.unit);
+  const [brand, setBrand] = useState(lot.brand ?? '');
   const [location, setLocation] = useState(lot.location ?? '');
   const [expires, setExpires] = useState(lot.expiresAt ? lot.expiresAt.slice(0, 10) : '');
   const [stocked, setStocked] = useState(lot.canonicalItem.assumeStocked ?? false);
@@ -134,7 +137,13 @@ function LotSheet({
       item.baseDimension = dim;
     }
     onSave(
-      { quantity: qty, unit, location: location.trim() || undefined, expiresAt: expires || undefined },
+      {
+        quantity: qty,
+        unit,
+        brand: brand.trim() || null,
+        location: location.trim() || undefined,
+        expiresAt: expires || undefined,
+      },
       item,
     );
   }
@@ -159,6 +168,14 @@ function LotSheet({
         </button>
         <UnitSelect value={unit} onChange={setUnit} />
         <span className="muted">{dimLabel}</span>
+      </div>
+      <div className="sheet-row">
+        <input
+          className="sheet-input sheet-input-wide"
+          placeholder="brand (optional — e.g. Jif, Kirkland)"
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+        />
       </div>
       <div className="sheet-row">
         <input
@@ -196,6 +213,7 @@ function LotSheet({
 
 interface Draft {
   name: string;
+  brand: string | null;
   quantity: number;
   unit: string;
 }
@@ -301,18 +319,29 @@ function MultimodalAdd({ onAdded }: { onAdded: (n: number) => void }) {
 
           {drafts && (
             <div className="mm-review">
-              <div className="section-label">Review, then add</div>
+              <div className="section-label">Review, then add — ingredient · brand · amount</div>
               {drafts.map((d, i) => (
-                <div key={i} className="sheet-row">
+                <div key={i} className="mm-row">
                   <input
-                    className="sheet-input sheet-input-wide"
+                    className="sheet-input mm-name"
+                    placeholder="ingredient"
                     value={d.name}
                     onChange={(e) =>
                       setDrafts(drafts.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
                     }
                   />
                   <input
-                    className="sheet-input"
+                    className="sheet-input mm-brand"
+                    placeholder="brand (optional)"
+                    value={d.brand ?? ''}
+                    onChange={(e) =>
+                      setDrafts(
+                        drafts.map((x, j) => (j === i ? { ...x, brand: e.target.value || null } : x)),
+                      )
+                    }
+                  />
+                  <input
+                    className="sheet-input mm-qty"
                     type="number"
                     min={0}
                     step="any"
@@ -516,6 +545,7 @@ export function Inventory() {
             {catLots.map((lot) => (
               <li key={lot.id}>
                 <span className="plan-recipe">{lot.canonicalItem.name}</span>
+                {lot.brand && <span className="muted"> · {lot.brand}</span>}
                 {lot.location && <span className="muted"> · {lot.location}</span>}
                 {lot.canonicalItem.assumeStocked && <span className="badge badge-ok">always</span>}
                 {expiryBadge(lot.expiresAt)}

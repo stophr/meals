@@ -143,6 +143,7 @@ export const inventoryCreateSchema = z.object({
   canonicalItemId: cuid,
   quantity: positive,
   unit: unitSchema,
+  brand: z.string().optional(),
   location: z.string().optional(),
   purchasedAt: z.coerce.date().optional(),
   expiresAt: z.coerce.date().optional(),
@@ -168,6 +169,7 @@ export const pantryBulkAddSchema = z.object({
     .array(
       z.object({
         name: z.string().min(1),
+        brand: z.string().nullish(),
         quantity: positive.default(1),
         unit: unitSchema.default('EACH'),
       }),

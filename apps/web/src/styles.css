@@ -760,6 +760,24 @@ select.chip {
   flex-direction: column;
   gap: 6px;
 }
+.mm-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.mm-name {
+  flex: 2 1 120px;
+  text-align: left;
+}
+.mm-brand {
+  flex: 1 1 90px;
+  text-align: left;
+}
+.mm-qty {
+  flex: 0 0 64px;
+  width: 64px;
+}
 .sheet-check input {
   width: 18px;
   height: 18px;
