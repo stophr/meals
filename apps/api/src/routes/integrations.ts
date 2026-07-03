@@ -19,6 +19,7 @@ import {
 } from '@meals/shared';
 import { chatJson } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
+import { computeItemOptions } from '../lib/shoppingOptions.js';
 import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices } from '../lib/kroger.js';
 import { recordCostcoPrices } from '../lib/costcoPrices.js';
 import { env } from '../env.js';
@@ -162,29 +163,31 @@ export async function integrationRoutes(app: FastifyInstance) {
       return { message: 'Cart not authorized — visit /api/integrations/kroger/authorize first' };
     }
 
-    const list = await prisma.shoppingList.findUniqueOrThrow({
-      where: { id },
-      include: { items: true },
-    });
-    const productIds = list.items
-      .filter((i) => i.status === 'pending' && i.chosenProductId)
-      .map((i) => i.chosenProductId!);
-    const products = await prisma.providerProduct.findMany({
-      where: { id: { in: productIds }, upc: { not: null } },
-    });
+    // Use the SAME per-item selection the Build view shows: the chosen product, or the best
+    // option when none was picked. No separate "auto-select" step required.
     const providerFilter = (req.body as { providerId?: string } | null)?.providerId;
-    const push = products
-      .filter((p) => !providerFilter || p.providerId === providerFilter)
-      .map((p) => {
-        const item = list.items.find((i) => i.chosenProductId === p.id)!;
-        const packBase = p.baseQuantity ? Number(p.baseQuantity) : 0;
-        const needed = Number(item.baseQuantityNeeded);
-        const qty = packBase > 0 ? Math.max(1, Math.ceil(needed / packBase)) : 1;
-        return { upc: p.upc!, quantity: qty };
-      });
+    const options = await computeItemOptions(household.id, id);
+    const picks = options
+      .map((it) => it.options.find((o) => o.productId === it.chosenProductId) ?? it.options[0])
+      .filter((o): o is NonNullable<typeof o> => !!o)
+      .filter((o) => !providerFilter || o.providerId === providerFilter);
+
+    const products = await prisma.providerProduct.findMany({
+      where: { id: { in: picks.map((o) => o.productId) }, upc: { not: null } },
+      select: { id: true, upc: true },
+    });
+    const upcById = new Map(products.map((p) => [p.id, p.upc!]));
+    const push = picks
+      .filter((o) => upcById.has(o.productId))
+      .map((o) => ({ upc: upcById.get(o.productId)!, quantity: o.packsNeeded }));
+
     if (!push.length) {
       reply.code(422);
-      return { message: 'No cart-pushable items (run optimize + sync-prices first so items have Kroger products)' };
+      return {
+        message:
+          'Nothing to add for this store — its items have no synced Kroger product with a UPC. ' +
+          'Run a Fry\'s price sync, or check that items are assigned to Fry\'s in Build.',
+      };
     }
     await addToCart(cfg, userToken, push);
     return { pushed: push.length, items: push };
