@@ -44,6 +44,7 @@ interface ItemWithOptions {
   name: string;
   neededBase: number;
   unit: string;
+  mode: 'total' | 'unit';
   chosenProductId: string | null;
   options: ItemOption[];
 }
@@ -340,18 +341,20 @@ export function Shopping() {
     await loadOptions(selected);
   }
 
-  async function autoSelect(mode: 'unit' | 'total') {
+  async function selectMode(mode: 'unit' | 'total', itemId?: string) {
     if (!selected) return;
     setBusy(true);
     try {
       const r = await api.post<{ selected: number; unpriced: number }>(
         `/shopping-lists/${selected}/auto-select`,
-        { mode },
+        { mode, ...(itemId ? { itemId } : {}) },
       );
-      setPriceMsg(
-        `Picked best ${mode === 'unit' ? 'unit price' : 'total'} for ${r.selected} item(s)` +
-          (r.unpriced ? `, ${r.unpriced} still unpriced.` : '.'),
-      );
+      if (!itemId) {
+        setPriceMsg(
+          `Whole list → best ${mode === 'unit' ? 'unit price' : 'total'} (${r.selected} priced)` +
+            (r.unpriced ? `, ${r.unpriced} unpriced.` : '.'),
+        );
+      }
       await loadOptions(selected);
       setBuild(undefined);
     } finally {
@@ -498,17 +501,22 @@ export function Shopping() {
             </button>
           </div>
 
+          <div className="section-label">Whole list</div>
           <div className="chips">
-            <button className="chip" disabled={busy} onClick={() => autoSelect('total')}>
-              💵 Best total
+            <button className="chip" disabled={busy} onClick={() => selectMode('total')}>
+              💵 Best total (default)
             </button>
-            <button className="chip" disabled={busy} onClick={() => autoSelect('unit')}>
+            <button className="chip" disabled={busy} onClick={() => selectMode('unit')}>
               ⚖️ Best unit price
             </button>
             <button className="chip active" disabled={busy} onClick={buildLists}>
               🧾 Build lists
             </button>
           </div>
+          <p className="muted sheet-hint">
+            Default is best total. Flip the whole list, or tap 💵/⚖️ on any item — handy for
+            shelf-stable staples where the bigger pack wins per-unit.
+          </p>
           {priceMsg && <p className="notice">{priceMsg}</p>}
 
           {build && (
@@ -581,6 +589,25 @@ export function Shopping() {
                     </div>
                   ) : (
                     <div className="card-sub muted">No price yet — 💲 check price</div>
+                  )}
+
+                  {opt && opt.options.length > 1 && (
+                    <div className="mode-chips">
+                      <button
+                        className={`mode-chip ${opt.mode === 'total' ? 'active' : ''}`}
+                        disabled={busy}
+                        onClick={() => selectMode('total', it.id)}
+                      >
+                        💵 total
+                      </button>
+                      <button
+                        className={`mode-chip ${opt.mode === 'unit' ? 'active' : ''}`}
+                        disabled={busy}
+                        onClick={() => selectMode('unit', it.id)}
+                      >
+                        ⚖️ unit
+                      </button>
+                    </div>
                   )}
 
                   {opt && opt.options.length > 1 && (

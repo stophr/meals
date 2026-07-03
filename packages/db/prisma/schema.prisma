@@ -567,6 +567,10 @@ model ShoppingListItem {
   chosenProductId    String?
   estimatedPrice     Decimal? @db.Decimal(12, 2)
 
+  // How this item picks its store: cheapest total (default) vs cheapest per-unit (worth it
+  // for shelf-stable staples bought in bulk). Set globally or per item.
+  priceMode String @default("total") // total | unit
+
   status String @default("pending") // pending | bought | skipped
 
   @@index([shoppingListId])

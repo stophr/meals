@@ -25,9 +25,24 @@ export interface ItemWithOptions {
   name: string;
   neededBase: number;
   unit: string;
+  mode: 'total' | 'unit';
   chosenProductId: string | null;
   chosenProviderId: string | null;
   options: ItemOption[];
+}
+
+/** Best option for a single item under a mode (unit falls back to total when no unit price). */
+export function bestOption(options: ItemOption[], mode: 'total' | 'unit'): ItemOption | undefined {
+  if (!options.length) return undefined;
+  let best = options[0]!;
+  for (const o of options) {
+    if (mode === 'unit') {
+      if ((o.unitPrice ?? o.totalCost) < (best.unitPrice ?? best.totalCost)) best = o;
+    } else if (o.totalCost < best.totalCost) {
+      best = o;
+    }
+  }
+  return best;
 }
 
 export async function computeItemOptions(
@@ -97,6 +112,7 @@ export async function computeItemOptions(
       name: item.canonicalItem.name,
       neededBase: needed,
       unit: item.unit,
+      mode: item.priceMode === 'unit' ? 'unit' : 'total',
       chosenProductId: item.chosenProductId,
       chosenProviderId: item.assignedProviderId,
       options,

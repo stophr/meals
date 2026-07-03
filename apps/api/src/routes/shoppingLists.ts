@@ -15,7 +15,7 @@ import { buildOptimizerInput } from '../lib/optimizerInput.js';
 import { buildShoppingList } from '../lib/shoppingBuild.js';
 import { noonToday, lockedDays, dayKey } from '../lib/queue.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
-import { computeItemOptions, pickBest } from '../lib/shoppingOptions.js';
+import { computeItemOptions, bestOption } from '../lib/shoppingOptions.js';
 
 function dayLabel(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -225,28 +225,38 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     return { items: await computeItemOptions(household.id, id) };
   });
 
-  // Flip every item to its best option by unit price or total cost, and persist.
+  // Set the price mode (cheapest total vs cheapest per-unit) and re-pick the store for the
+  // whole list, or a single item when `itemId` is given. Selecting 'total' is also how you
+  // revert. Persists priceMode + the chosen product so Build/Cart honor it.
   app.post('/shopping-lists/:id/auto-select', async (req) => {
     const { id } = req.params as { id: string };
-    const mode = ((req.body as { mode?: string } | null)?.mode === 'unit' ? 'unit' : 'total') as
-      | 'unit'
-      | 'total';
+    const body = req.body as { mode?: string; itemId?: string } | null;
+    const mode = (body?.mode === 'unit' ? 'unit' : 'total') as 'unit' | 'total';
     const household = await getHousehold();
-    const items = await computeItemOptions(household.id, id);
-    const picks = pickBest(items, mode);
+    const all = await computeItemOptions(household.id, id);
+    const targets = body?.itemId ? all.filter((i) => i.itemId === body.itemId) : all;
+
+    let selected = 0;
     await prisma.$transaction(
-      picks.map((p) =>
-        prisma.shoppingListItem.update({
-          where: { id: p.itemId },
+      targets.map((it) => {
+        const best = bestOption(it.options, mode);
+        if (best) selected++;
+        return prisma.shoppingListItem.update({
+          where: { id: it.itemId },
           data: {
-            assignedProviderId: p.option.providerId,
-            chosenProductId: p.option.productId,
-            estimatedPrice: p.option.totalCost.toFixed(2),
+            priceMode: mode,
+            ...(best
+              ? {
+                  assignedProviderId: best.providerId,
+                  chosenProductId: best.productId,
+                  estimatedPrice: best.totalCost.toFixed(2),
+                }
+              : {}),
           },
-        }),
-      ),
+        });
+      }),
     );
-    return { mode, selected: picks.length, unpriced: items.length - picks.length };
+    return { mode, scope: body?.itemId ? 'item' : 'all', selected, unpriced: targets.length - selected };
   });
 
   // Split the list per store, with totals and whether each store supports cart fill.

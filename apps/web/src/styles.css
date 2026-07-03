@@ -778,6 +778,30 @@ select.chip {
   flex: 0 0 64px;
   width: 64px;
 }
+
+/* Per-item price-mode toggle (total vs unit) */
+.mode-chips {
+  display: inline-flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mode-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface, #fff);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.mode-chip.active {
+  background: #15803d; /* dark green */
+  color: #fff;
+  border-color: #15803d;
+  font-weight: 600;
+}
+.mode-chip:disabled {
+  opacity: 0.6;
+}
 .sheet-check input {
   width: 18px;
   height: 18px;
