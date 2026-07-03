@@ -4,26 +4,76 @@ import { optimize } from '@meals/core';
 import {
   shoppingListCreateSchema,
   shoppingListItemUpdateSchema,
+  shoppingListItemAddSchema,
   shopFromQueueSchema,
+  archiveSchema,
 } from '@meals/shared';
 import type { OptimizationResult } from '@meals/shared';
+import { toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { buildOptimizerInput } from '../lib/optimizerInput.js';
 import { buildShoppingList } from '../lib/shoppingBuild.js';
-import { noonToday } from '../lib/queue.js';
+import { noonToday, lockedDays, dayKey } from '../lib/queue.js';
+import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { computeItemOptions, pickBest } from '../lib/shoppingOptions.js';
 
 function dayLabel(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+function startOfToday(): Date {
+  const d = noonToday();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export async function shoppingListRoutes(app: FastifyInstance) {
-  app.get('/shopping-lists', async () => {
+  app.get('/shopping-lists', async (req) => {
     const household = await getHousehold();
+    const q = req.query as { archived?: string };
+    // Auto-archive any list whose covered horizon is now in the past.
+    await prisma.shoppingList.updateMany({
+      where: {
+        householdId: household.id,
+        archivedAt: null,
+        coverageEnd: { not: null, lt: startOfToday() },
+      },
+      data: { archivedAt: new Date() },
+    });
+    const wantArchived = q.archived === 'true' || q.archived === '1';
     return prisma.shoppingList.findMany({
-      where: { householdId: household.id },
+      where: { householdId: household.id, archivedAt: wantArchived ? { not: null } : null },
       orderBy: { createdAt: 'desc' },
     });
+  });
+
+  // Upcoming days for the "going to the store" picker: each day with its queued meals and
+  // whether it's already locked by a prior (active) list — locked days can't be re-selected.
+  app.get('/shopping-lists/upcoming-days', async (req) => {
+    const household = await getHousehold();
+    const horizon = Math.min(60, Math.max(1, Number((req.query as { days?: string }).days ?? 21)));
+    const start = startOfToday();
+    const end = new Date(start.getTime() + horizon * 86_400_000 - 1);
+    const [entries, locks] = await Promise.all([
+      prisma.mealPlanEntry.findMany({
+        where: { mealPlan: { householdId: household.id }, date: { gte: start, lte: end } },
+        include: { recipe: { select: { name: true } } },
+        orderBy: { date: 'asc' },
+      }),
+      lockedDays(household.id),
+    ]);
+    const byDay = new Map<string, { date: string; locked: boolean; meals: string[] }>();
+    for (let i = 0; i < horizon; i++) {
+      const d = new Date(start.getTime() + i * 86_400_000);
+      const key = dayKey(d);
+      byDay.set(key, { date: key, locked: locks.has(key), meals: [] });
+    }
+    for (const e of entries) {
+      const key = dayKey(e.date!);
+      byDay.get(key)?.meals.push(e.recipe.name);
+    }
+    // Only surface days that actually have meals to shop for.
+    return { days: [...byDay.values()].filter((d) => d.meals.length > 0) };
   });
 
   app.get('/shopping-lists/:id', async (req) => {
@@ -46,42 +96,84 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   // "I'm going to the grocery store": build a list from the next N days of queued meals
   // (skipping meals already bought for), then LOCK those days.
   app.post('/shopping-lists/from-queue', async (req, reply) => {
-    const { days } = shopFromQueueSchema.parse(req.body ?? {});
+    const { days, dates } = shopFromQueueSchema.parse(req.body ?? {});
     const household = await getHousehold();
+    const locks = await lockedDays(household.id);
 
-    const start = noonToday();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start.getTime() + days * 86_400_000 - 1);
-
-    const entries = await prisma.mealPlanEntry.findMany({
-      where: {
-        mealPlan: { householdId: household.id },
-        date: { gte: start, lte: end },
-        lockedByListId: null,
-      },
-      include: {
-        recipe: { include: { ingredients: { include: { canonicalItem: true } } } },
-      },
-    });
-    if (!entries.length) {
+    // Chosen day-keys: explicit picks (day-picker) or the next N days. Locked days dropped.
+    let dayKeys: string[];
+    if (dates && dates.length) {
+      dayKeys = dates.map((d) => dayKey(new Date(d)));
+    } else {
+      const s = startOfToday();
+      dayKeys = Array.from({ length: days }, (_, i) => dayKey(new Date(s.getTime() + i * 86_400_000)));
+    }
+    const wanted = new Set(dayKeys.filter((k) => !locks.has(k)));
+    if (!wanted.size) {
       reply.code(422);
-      return {
-        message: `No unlocked meals queued in the next ${days} day(s) — add meals to the queue first.`,
-      };
+      return { message: 'No selectable days — pick at least one unlocked day with meals.' };
     }
 
-    const coverageEnd = new Date(start.getTime() + (days - 1) * 86_400_000);
+    const sorted = [...wanted].sort();
+    const rangeStart = new Date(`${sorted[0]}T00:00:00`);
+    const rangeEnd = new Date(`${sorted[sorted.length - 1]}T23:59:59`);
+    const entries = (
+      await prisma.mealPlanEntry.findMany({
+        where: {
+          mealPlan: { householdId: household.id },
+          date: { gte: rangeStart, lte: rangeEnd },
+          lockedByListId: null,
+        },
+        include: { recipe: { include: { ingredients: { include: { canonicalItem: true } } } } },
+      })
+    ).filter((e) => wanted.has(dayKey(e.date!))); // exact chosen days only (non-contiguous safe)
+
+    if (!entries.length) {
+      reply.code(422);
+      return { message: 'No unlocked meals on the selected day(s) — add meals to the queue first.' };
+    }
+
     const list = await buildShoppingList(household.id, entries, {
-      name: `Shop ${dayLabel(start)} – ${dayLabel(coverageEnd)}`,
-      coverageStart: start,
-      coverageEnd,
+      name: `Shop ${dayLabel(rangeStart)} – ${dayLabel(rangeEnd)}`,
+      coverageStart: rangeStart,
+      coverageEnd: new Date(`${sorted[sorted.length - 1]}T00:00:00`),
     });
     await prisma.mealPlanEntry.updateMany({
       where: { id: { in: entries.map((e) => e.id) } },
       data: { lockedByListId: list.id },
     });
     reply.code(201);
-    return { ...list, lockedMeals: entries.length, coverageDays: days };
+    return { ...list, lockedMeals: entries.length, coverageDays: wanted.size };
+  });
+
+  // Archive / unarchive a list (clears Shop UI without deleting).
+  app.post('/shopping-lists/:id/archive', async (req) => {
+    const { id } = req.params as { id: string };
+    const { archived } = archiveSchema.parse(req.body ?? {});
+    return prisma.shoppingList.update({
+      where: { id },
+      data: { archivedAt: archived ? new Date() : null },
+    });
+  });
+
+  // Add a one-off item by name (resolved to a canonical item via the alias index).
+  app.post('/shopping-lists/:id/items', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const data = shoppingListItemAddSchema.parse(req.body);
+    const household = await getHousehold();
+    const resolved = await resolveCanonicalItem(household.id, data.name);
+    const base = toBaseQuantity(data.quantity, data.unit);
+    reply.code(201);
+    return prisma.shoppingListItem.create({
+      data: {
+        shoppingListId: id,
+        canonicalItemId: resolved.id,
+        quantityNeeded: data.quantity.toString(),
+        unit: data.unit,
+        baseQuantityNeeded: base.baseQuantity.toString(),
+      },
+      include: { canonicalItem: true },
+    });
   });
 
   // Run the time-vs-savings optimizer, persist the result, and pre-assign each item to the

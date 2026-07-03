@@ -155,6 +155,25 @@ export const inventoryConsumeSchema = z.object({
   quantity: positive,
   unit: unitSchema,
 });
+// Multimodal pantry add: extract a preview from text/image/video/audio, then bulk-add the
+// reviewed items as inventory lots.
+export const pantryExtractSchema = z.object({
+  source: z.enum(['text', 'image', 'video', 'audio']),
+  text: z.string().optional(),
+  dataBase64: z.string().optional(),
+  mediaType: z.string().optional(),
+});
+export const pantryBulkAddSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        quantity: positive.default(1),
+        unit: unitSchema.default('EACH'),
+      }),
+    )
+    .min(1),
+});
 export type InventoryCreate = z.infer<typeof inventoryCreateSchema>;
 
 // ---- Meal plans ----
@@ -230,15 +249,26 @@ export const shoppingListCreateSchema = z.object({
   mealPlanId: cuid.optional(),
 });
 
-/** "I'm going to the grocery store" — build a list for the next N days of queued meals. */
+/**
+ * "I'm going to the grocery store": build a list from the queue. Either pick explicit
+ * calendar days (`dates`) — the day-picker — or fall back to the next N `days`.
+ */
 export const shopFromQueueSchema = z.object({
-  days: z.number().int().min(1).max(30).default(7),
+  days: z.number().int().min(1).max(60).default(7),
+  dates: z.array(z.coerce.date()).max(60).optional(),
 });
 export const shoppingListItemUpdateSchema = z.object({
   assignedProviderId: cuid.nullish(),
   chosenProductId: cuid.nullish(),
   status: z.enum(['pending', 'bought', 'skipped']).optional(),
 });
+/** Add a one-off item to a shopping list by name (resolved to a canonical item). */
+export const shoppingListItemAddSchema = z.object({
+  name: z.string().min(1),
+  quantity: positive.default(1),
+  unit: unitSchema.default('EACH'),
+});
+export const archiveSchema = z.object({ archived: z.boolean().default(true) });
 export type ShoppingListCreate = z.infer<typeof shoppingListCreateSchema>;
 
 // ---- Costco price import (bookmarklet paste) ----

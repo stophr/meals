@@ -13,21 +13,23 @@ export function noonToday(): Date {
   return d;
 }
 
-/** Map of locked day-key -> shopping list id, across all lists with a coverage range. */
+/**
+ * Map of locked day-key -> shopping list id. A day is locked when it holds a meal already
+ * bought for (entry.lockedByListId). Entry-based (not coverage-range) so a non-contiguous
+ * day pick — shop Mon & Wed, skip Tue — leaves the skipped day free. Lists that have been
+ * archived no longer lock anything.
+ */
 export async function lockedDays(householdId: string): Promise<Map<string, string>> {
-  const lists = await prisma.shoppingList.findMany({
-    where: { householdId, coverageStart: { not: null }, coverageEnd: { not: null } },
-    select: { id: true, coverageStart: true, coverageEnd: true },
+  const entries = await prisma.mealPlanEntry.findMany({
+    where: {
+      mealPlan: { householdId },
+      date: { not: null },
+      lockedByListId: { not: null },
+      lockedByList: { archivedAt: null },
+    },
+    select: { date: true, lockedByListId: true },
   });
   const out = new Map<string, string>();
-  for (const list of lists) {
-    for (
-      let t = list.coverageStart!.getTime();
-      t <= list.coverageEnd!.getTime() + 1;
-      t += 86_400_000
-    ) {
-      out.set(dayKey(new Date(t)), list.id);
-    }
-  }
+  for (const e of entries) out.set(dayKey(e.date!), e.lockedByListId!);
   return out;
 }

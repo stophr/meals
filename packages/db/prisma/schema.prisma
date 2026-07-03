@@ -534,6 +534,9 @@ model ShoppingList {
   // Cached optimizer result (chosen option + alternatives) for offline/in-store use.
   optimizationResult Json?
 
+  // Archived lists drop out of the active Shop view. Auto-set once today passes coverageEnd.
+  archivedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

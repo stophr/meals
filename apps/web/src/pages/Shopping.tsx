@@ -10,6 +10,7 @@ interface ListRow {
   status: string;
   coverageStart?: string | null;
   coverageEnd?: string | null;
+  archivedAt?: string | null;
 }
 interface ListDetail extends ListRow {
   items: {
@@ -287,7 +288,12 @@ function CouponsPanel() {
 }
 
 export function Shopping() {
-  const { data: lists, error, loading } = useApi<ListRow[]>(() => api.get('/shopping-lists'), []);
+  const [tab, setTab] = useState<'active' | 'archived'>('active');
+  const [nonce, setNonce] = useState(0);
+  const { data: lists, error, loading } = useApi<ListRow[]>(
+    () => api.get(`/shopping-lists${tab === 'archived' ? '?archived=true' : ''}`),
+    [tab, nonce],
+  );
   const { data: providers } = useApi<ProviderRow[]>(() => api.get('/providers'), []);
   const [selected, setSelected] = useState<string>();
   const [detail, setDetail] = useState<ListDetail>();
@@ -296,6 +302,9 @@ export function Shopping() {
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState<string>();
   const [priceMsg, setPriceMsg] = useState<string>();
+  const [newItem, setNewItem] = useState('');
+
+  const refresh = () => setNonce((n) => n + 1);
 
   async function loadOptions(id: string) {
     const res = await api.get<{ items: ItemWithOptions[] }>(`/shopping-lists/${id}/options`);
@@ -306,6 +315,29 @@ export function Shopping() {
     setBuild(undefined);
     setDetail(await api.get<ListDetail>(`/shopping-lists/${id}`));
     await loadOptions(id);
+  }
+
+  async function newAdHocList() {
+    const now = new Date();
+    const l = await api.post<ListRow>('/shopping-lists', {
+      name: `Quick list ${now.getMonth() + 1}/${now.getDate()}`,
+    });
+    refresh();
+    open(l.id);
+  }
+
+  async function archiveList(id: string, archived: boolean) {
+    await api.post(`/shopping-lists/${id}/archive`, { archived });
+    if (selected === id) setSelected(undefined);
+    refresh();
+  }
+
+  async function addOneOff() {
+    if (!selected || !newItem.trim()) return;
+    await api.post(`/shopping-lists/${selected}/items`, { name: newItem.trim() });
+    setNewItem('');
+    setDetail(await api.get<ListDetail>(`/shopping-lists/${selected}`));
+    await loadOptions(selected);
   }
 
   async function autoSelect(mode: 'unit' | 'total') {
@@ -367,14 +399,43 @@ export function Shopping() {
   return (
     <section className="page">
       <h2>Shopping</h2>
-      {!selected && <CouponsPanel />}
+
+      {!selected && (
+        <>
+          <div className="slot-tabs">
+            <button
+              className={`slot-tab ${tab === 'active' ? 'active' : ''}`}
+              onClick={() => setTab('active')}
+            >
+              Active
+            </button>
+            <button
+              className={`slot-tab ${tab === 'archived' ? 'active' : ''}`}
+              onClick={() => setTab('archived')}
+            >
+              Archived
+            </button>
+          </div>
+          {tab === 'active' && (
+            <button className="btn btn-inline" onClick={newAdHocList}>
+              ＋ New list
+            </button>
+          )}
+          {tab === 'active' && <CouponsPanel />}
+        </>
+      )}
+
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="error">{error}</p>}
 
       {!selected && (
         <ul className="card-list">
           {lists?.length === 0 && (
-            <p className="muted">No lists yet — use “🛒 I'm going to the grocery store” on the Plan tab.</p>
+            <p className="muted">
+              {tab === 'archived'
+                ? 'No archived lists.'
+                : 'No lists yet — tap ＋ New list, or “🛒 I\'m going to the grocery store” on the Plan tab.'}
+            </p>
           )}
           {lists?.map((l) => (
             <li key={l.id} className="card card-row" onClick={() => open(l.id)}>
@@ -384,16 +445,26 @@ export function Shopping() {
                   {l.status}
                   {l.coverageStart &&
                     l.coverageEnd &&
-                    ` · locks ${new Date(l.coverageStart).getMonth() + 1}/${new Date(l.coverageStart).getDate()}–${new Date(l.coverageEnd).getMonth() + 1}/${new Date(l.coverageEnd).getDate()}`}
+                    ` · ${new Date(l.coverageStart).getMonth() + 1}/${new Date(l.coverageStart).getDate()}–${new Date(l.coverageEnd).getMonth() + 1}/${new Date(l.coverageEnd).getDate()}`}
                 </div>
               </div>
+              <button
+                className="btn-link"
+                title={tab === 'archived' ? 'Restore to active' : 'Archive (hide from active)'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  archiveList(l.id, tab !== 'archived');
+                }}
+              >
+                {tab === 'archived' ? '↩︎' : '🗄️'}
+              </button>
               <button
                 className="entry-x"
                 title="Delete list (unlocks its days)"
                 onClick={async (e) => {
                   e.stopPropagation();
                   await api.del(`/shopping-lists/${l.id}`);
-                  location.reload();
+                  refresh();
                 }}
               >
                 ✕
@@ -405,10 +476,27 @@ export function Shopping() {
 
       {selected && detail && (
         <div>
-          <button className="btn-link" onClick={() => setSelected(undefined)}>
-            ← All lists
-          </button>
+          <div className="page-head">
+            <button className="btn-link" onClick={() => setSelected(undefined)}>
+              ← All lists
+            </button>
+            <button className="btn-link" onClick={() => archiveList(selected!, true)}>
+              🗄️ Archive
+            </button>
+          </div>
           <h3>{detail.name ?? 'Shopping list'}</h3>
+
+          <div className="search-row add-oneoff">
+            <input
+              placeholder="＋ Add one-off item (e.g. paper towels)…"
+              value={newItem}
+              onChange={(e) => setNewItem(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addOneOff()}
+            />
+            <button className="btn btn-inline" onClick={addOneOff} disabled={!newItem.trim()}>
+              Add
+            </button>
+          </div>
 
           <div className="chips">
             <button className="chip" disabled={busy} onClick={() => autoSelect('total')}>

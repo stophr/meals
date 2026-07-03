@@ -49,7 +49,6 @@ const RULE_LABEL: Record<string, string> = {
   WEEKLY: 'weekly',
   MONTHLY: 'monthly',
 };
-const HORIZONS = [3, 5, 7, 10, 14];
 const BOARD_DAYS = 14;
 
 const SLOTS = [
@@ -268,7 +267,8 @@ export function Plan() {
   const [msg, setMsg] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [shopOpen, setShopOpen] = useState(false);
-  const [horizon, setHorizon] = useState(7);
+  const [shopDays, setShopDays] = useState<{ date: string; locked: boolean; meals: string[] }[]>();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [dragging, setDragging] = useState<QueueEntry>();
   const [slot, setSlot] = useState('dinner');
   const [servingsFor, setServingsFor] = useState<string>();
@@ -433,16 +433,42 @@ export function Plan() {
     setBusy(false);
   }
 
+  async function openShop() {
+    const next = !shopOpen;
+    setShopOpen(next);
+    if (next) {
+      const r = await api.get<{ days: { date: string; locked: boolean; meals: string[] }[] }>(
+        '/shopping-lists/upcoming-days',
+      );
+      setShopDays(r.days);
+      // Default: pre-check every selectable (unlocked) day that has meals.
+      setPicked(new Set(r.days.filter((d) => !d.locked).map((d) => d.date)));
+    }
+  }
+
+  function togglePicked(date: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      next.has(date) ? next.delete(date) : next.add(date);
+      return next;
+    });
+  }
+
   async function goShopping() {
+    const dates = [...picked];
+    if (!dates.length) {
+      setMsg('Pick at least one day to shop for.');
+      return;
+    }
     setBusy(true);
     await run(async () => {
       const list = await api.post<{ items: unknown[]; lockedMeals: number; name?: string }>(
         '/shopping-lists/from-queue',
-        { days: horizon },
+        { dates },
       );
       setShopOpen(false);
       setMsg(
-        `List "${list.name}": ${list.items.length} items for ${list.lockedMeals} meal(s) across all slots. Days locked.`,
+        `List "${list.name}": ${list.items.length} items for ${list.lockedMeals} meal(s). Those days are locked.`,
       );
       refresh();
     });
@@ -485,25 +511,47 @@ export function Plan() {
         ))}
       </div>
 
-      <button className="btn shop-cta" onClick={() => setShopOpen(!shopOpen)}>
+      <button className="btn shop-cta" onClick={openShop}>
         🛒 I'm going to the grocery store
       </button>
       {shopOpen && (
         <div className="card shop-panel">
-          <div className="section-label">Shop how many days out? (covers every slot)</div>
-          <div className="chips">
-            {HORIZONS.map((h) => (
-              <button
-                key={h}
-                className={`chip ${horizon === h ? 'active' : ''}`}
-                onClick={() => setHorizon(h)}
-              >
-                {h} days
-              </button>
-            ))}
-          </div>
-          <button className="btn btn-inline" disabled={busy} onClick={goShopping}>
-            Build list for next {horizon} days
+          <div className="section-label">Which days are you shopping for?</div>
+          {shopDays && shopDays.length === 0 && (
+            <p className="muted">No upcoming days with meals — add meals to the queue first.</p>
+          )}
+          <ul className="day-picker">
+            {shopDays?.map((d) => {
+              const dt = new Date(`${d.date}T00:00:00`);
+              const label = dt.toLocaleDateString(undefined, {
+                weekday: 'short',
+                month: 'numeric',
+                day: 'numeric',
+              });
+              return (
+                <li key={d.date}>
+                  <label className={`day-row ${d.locked ? 'locked' : ''}`}>
+                    <input
+                      type="checkbox"
+                      disabled={d.locked}
+                      checked={picked.has(d.date)}
+                      onChange={() => togglePicked(d.date)}
+                    />
+                    <span className="day-label">{label}</span>
+                    <span className="day-meals muted">
+                      {d.locked ? '🔒 already on a list' : d.meals.join(', ')}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <button
+            className="btn btn-inline"
+            disabled={busy || picked.size === 0}
+            onClick={goShopping}
+          >
+            Build list for {picked.size} day{picked.size === 1 ? '' : 's'}
           </button>
         </div>
       )}

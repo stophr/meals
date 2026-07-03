@@ -696,6 +696,70 @@ select.chip {
   cursor: pointer;
   font-size: 0.9rem;
 }
+
+/* Shopping: one-off add + day picker + multimodal */
+.add-oneoff {
+  margin: 8px 0;
+}
+.day-picker {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.day-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.day-row.locked {
+  opacity: 0.55;
+}
+.day-row input {
+  width: 18px;
+  height: 18px;
+}
+.day-label {
+  font-weight: 600;
+  min-width: 6.5ch;
+}
+.day-meals {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+.mm-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mm-text {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  resize: vertical;
+}
+.mm-file {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.mm-review {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .sheet-check input {
   width: 18px;
   height: 18px;

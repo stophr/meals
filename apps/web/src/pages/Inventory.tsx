@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import { UNIT_TABLE, BASE_UNIT, dimensionOf } from '@meals/shared';
 import type { UnitDimension, Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
@@ -193,6 +194,155 @@ function LotSheet({
   );
 }
 
+interface Draft {
+  name: string;
+  quantity: number;
+  unit: string;
+}
+
+/** Read a File to base64 (no data: prefix). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+/** Add pantry items from a spoken/typed description, a photo, a video, or an audio file. */
+function MultimodalAdd({ onAdded }: { onAdded: (n: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>();
+  const [drafts, setDrafts] = useState<Draft[]>();
+
+  async function extract(body: Record<string, unknown>) {
+    setBusy(true);
+    setMsg(undefined);
+    setDrafts(undefined);
+    try {
+      const r = await api.post<{ items?: Draft[]; message?: string }>('/inventory/extract', body);
+      if (r.message) setMsg(r.message);
+      else if (!r.items?.length) setMsg('Nothing recognized — try again or add manually.');
+      else setDrafts(r.items);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const source = file.type.startsWith('image')
+      ? 'image'
+      : file.type.startsWith('video')
+        ? 'video'
+        : file.type.startsWith('audio')
+          ? 'audio'
+          : 'image';
+    const dataBase64 = await fileToBase64(file);
+    await extract({ source, dataBase64, mediaType: file.type });
+  }
+
+  async function confirm() {
+    if (!drafts?.length) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ added: number }>('/inventory/bulk-add', { items: drafts });
+      setDrafts(undefined);
+      setText('');
+      setMsg(`Added ${r.added} item(s) to your pantry.`);
+      onAdded(r.added);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card add-card">
+      <button className="btn-link" onClick={() => setOpen(!open)}>
+        {open ? '▾' : '▸'} 🎙️ Add from description, photo, video, or audio
+      </button>
+      {open && (
+        <div className="mm-add">
+          <textarea
+            className="mm-text"
+            placeholder="Describe what you have — e.g. “2 lb chicken, a dozen eggs, half a bag of rice, 3 cans black beans”"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+          />
+          <div className="sheet-row">
+            <button
+              className="btn btn-inline"
+              disabled={busy || !text.trim()}
+              onClick={() => extract({ source: 'text', text })}
+            >
+              Read text
+            </button>
+            <label className="chip mm-file">
+              📷 Photo/Video/Audio
+              <input
+                type="file"
+                accept="image/*,video/*,audio/*"
+                capture="environment"
+                hidden
+                onChange={onFile}
+              />
+            </label>
+          </div>
+          {busy && <p className="muted">Reading… (local model, a few seconds)</p>}
+          {msg && <p className="notice">{msg}</p>}
+
+          {drafts && (
+            <div className="mm-review">
+              <div className="section-label">Review, then add</div>
+              {drafts.map((d, i) => (
+                <div key={i} className="sheet-row">
+                  <input
+                    className="sheet-input sheet-input-wide"
+                    value={d.name}
+                    onChange={(e) =>
+                      setDrafts(drafts.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
+                    }
+                  />
+                  <input
+                    className="sheet-input"
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={d.quantity}
+                    onChange={(e) =>
+                      setDrafts(
+                        drafts.map((x, j) => (j === i ? { ...x, quantity: Number(e.target.value) } : x)),
+                      )
+                    }
+                  />
+                  <UnitSelect
+                    value={d.unit}
+                    onChange={(u) => setDrafts(drafts.map((x, j) => (j === i ? { ...x, unit: u } : x)))}
+                  />
+                  <button className="entry-x" onClick={() => setDrafts(drafts.filter((_, j) => j !== i))}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button className="btn btn-inline" disabled={busy || !drafts.length} onClick={confirm}>
+                Add {drafts.length} to pantry
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Inventory() {
   const [nonce, setNonce] = useState(0);
   const { data, error, loading } = useApi<Lot[]>(() => api.get('/inventory'), [nonce]);
@@ -347,6 +497,8 @@ export function Inventory() {
           </div>
         )}
       </div>
+
+      <MultimodalAdd onAdded={() => refresh()} />
 
       <div className="search-row">
         <input placeholder="Search pantry…" value={search} onChange={(e) => setSearch(e.target.value)} />
