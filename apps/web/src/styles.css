@@ -802,6 +802,46 @@ select.chip {
 .mode-chip:disabled {
   opacity: 0.6;
 }
+
+/* Ingredient substitution */
+.ing-sub {
+  margin-left: 8px;
+  font-size: 0.85rem;
+}
+.sub-picker {
+  margin: 4px 0 6px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 280px;
+}
+.sub-picker input {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+.sub-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+}
+.sub-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.role-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #15803d;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
 .sheet-check input {
   width: 18px;
   height: 18px;

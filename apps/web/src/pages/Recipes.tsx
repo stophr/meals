@@ -34,6 +34,9 @@ interface RecipeRow {
     optional: boolean;
     canonicalItemId?: string | null;
     canonicalItem?: { name: string } | null;
+    substitutedFrom?: string | null;
+    substitutionId?: string | null;
+    originalCanonicalItemId?: string | null;
   }[];
   coverage: RecipeCoverage;
 }
@@ -85,6 +88,33 @@ function CoverageBadge({ c }: { c: RecipeCoverage }) {
   return null;
 }
 
+/** Inline search to pick a replacement ingredient for a substitution. */
+function SubstitutePicker({ onPick }: { onPick: (itemId: string) => void }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<{ id: string; name: string }[]>();
+  useEffect(() => {
+    if (!q.trim()) {
+      setHits(undefined);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const r = await api.get<{ id: string; name: string }[]>(`/items?q=${encodeURIComponent(q.trim())}`);
+      setHits(r.slice(0, 6));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [q]);
+  return (
+    <div className="sub-picker">
+      <input autoFocus placeholder="substitute with…" value={q} onChange={(e) => setQ(e.target.value)} />
+      {hits?.map((h) => (
+        <button key={h.id} className="autocomplete-row" onClick={() => onPick(h.id)}>
+          {h.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Recipes() {
   const [items, setItems] = useState<RecipeRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -99,6 +129,7 @@ export function Recipes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [detail, setDetail] = useState<RecipeRow>();
+  const [subFor, setSubFor] = useState<string>();
   const [mode, setMode] = useState<'catalog' | 'discover'>('catalog');
   const [discoverQ, setDiscoverQ] = useState('');
   const [discoverResults, setDiscoverResults] = useState<DiscoverResult[]>();
@@ -171,6 +202,16 @@ export function Recipes() {
     const updated = await api.post<RecipeRow>(`/recipes/${r.id}/favorite`);
     setItems((xs) => xs.map((x) => (x.id === r.id ? { ...x, isFavorite: updated.isFavorite } : x)));
     if (detail?.id === r.id) setDetail({ ...detail, isFavorite: updated.isFavorite });
+  }
+
+  async function applySub(fromCanonicalItemId: string, toCanonicalItemId: string) {
+    await api.post('/substitutions', { fromCanonicalItemId, toCanonicalItemId });
+    setSubFor(undefined);
+    if (detail) await openDetail(detail.id);
+  }
+  async function revertSub(subId: string) {
+    await api.del(`/substitutions/${subId}`);
+    if (detail) await openDetail(detail.id);
   }
 
   async function openDetail(id: string) {
@@ -344,10 +385,42 @@ export function Recipes() {
             return (
               <li key={ing.id} className={cls}>
                 <span className="ing-mark">{mark}</span>
-                {ing.freeText
-                  ? imperializeText(ing.freeText)
-                  : `${formatImperial(Number(ing.baseQuantity ?? ing.quantity), ing.unit ? dimensionOf(ing.unit as Unit) : 'COUNT')} ${ing.canonicalItem?.name ?? ''}`}
+                {ing.substitutedFrom ? (
+                  <span>
+                    🔄 {ing.canonicalItem?.name}{' '}
+                    <span className="muted">(instead of {ing.substitutedFrom})</span>
+                  </span>
+                ) : ing.freeText ? (
+                  imperializeText(ing.freeText)
+                ) : (
+                  `${formatImperial(Number(ing.baseQuantity ?? ing.quantity), ing.unit ? dimensionOf(ing.unit as Unit) : 'COUNT')} ${ing.canonicalItem?.name ?? ''}`
+                )}
                 {ing.optional && <em className="muted"> (optional)</em>}
+                {linked &&
+                  (ing.substitutionId ? (
+                    <button
+                      className="btn-link ing-sub"
+                      title="Revert substitution"
+                      onClick={() => revertSub(ing.substitutionId!)}
+                    >
+                      ↩︎
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-link ing-sub"
+                      title="Substitute this ingredient (org-wide)"
+                      onClick={() => setSubFor(subFor === ing.id ? undefined : ing.id)}
+                    >
+                      🔄
+                    </button>
+                  ))}
+                {subFor === ing.id && (
+                  <SubstitutePicker
+                    onPick={(toId) =>
+                      applySub(ing.originalCanonicalItemId ?? ing.canonicalItemId!, toId)
+                    }
+                  />
+                )}
               </li>
             );
           })}

@@ -206,6 +206,128 @@ function CostcoImport() {
   );
 }
 
+const ROLE_LABEL: Record<string, string> = { base: 'Base', sous_chef: 'Sous chef', chef: 'Chef' };
+
+function OrgPanel() {
+  const [me, setMe] = useState<{
+    email: string;
+    role: string;
+    isAppAdmin: boolean;
+    org?: { name?: string } | null;
+  }>();
+  const [msg, setMsg] = useState<string>();
+  const [invEmail, setInvEmail] = useState('');
+  const [invRole, setInvRole] = useState('base');
+  const [orgName, setOrgName] = useState('');
+  const [orgChef, setOrgChef] = useState('');
+  useEffect(() => {
+    api.get<typeof me>('/auth/me').then(setMe).catch(() => {});
+  }, []);
+  if (!me) return null;
+
+  async function inviteUser() {
+    await api.post('/users/invite', { email: invEmail, role: invRole });
+    setMsg(`Invited ${invEmail} as ${invRole}. (Email delivery pending pantrezy.com.)`);
+    setInvEmail('');
+  }
+  async function inviteOrg() {
+    await api.post('/orgs', { name: orgName, chefEmail: orgChef });
+    setMsg(`Created "${orgName}", invited ${orgChef} as chef. (Email delivery pending pantrezy.com.)`);
+    setOrgName('');
+    setOrgChef('');
+  }
+
+  return (
+    <div className="card add-card">
+      <div className="card-title">🏛️ Organization</div>
+      <p>
+        {me.org?.name ?? 'Your org'} · <span className="role-badge">{ROLE_LABEL[me.role] ?? me.role}</span>
+        {me.isAppAdmin && ' · app admin'}
+      </p>
+      <p className="muted sheet-hint">
+        Passwordless sign-in (email magic links) is stubbed until pantrezy.com is live — see
+        docs/multi-tenancy.md.
+      </p>
+      {me.role === 'chef' && (
+        <div className="sheet-row">
+          <input
+            className="sheet-input sheet-input-wide"
+            placeholder="invite user email"
+            value={invEmail}
+            onChange={(e) => setInvEmail(e.target.value)}
+          />
+          <select className="chip" value={invRole} onChange={(e) => setInvRole(e.target.value)}>
+            <option value="base">base</option>
+            <option value="sous_chef">sous chef</option>
+            <option value="chef">chef</option>
+          </select>
+          <button className="btn btn-inline" disabled={!invEmail} onClick={inviteUser}>
+            Invite user
+          </button>
+        </div>
+      )}
+      {me.isAppAdmin && (
+        <div className="sheet-row">
+          <input
+            className="sheet-input"
+            placeholder="new org name"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+          />
+          <input
+            className="sheet-input"
+            placeholder="chef email"
+            value={orgChef}
+            onChange={(e) => setOrgChef(e.target.value)}
+          />
+          <button className="btn btn-inline" disabled={!orgName || !orgChef} onClick={inviteOrg}>
+            Invite org
+          </button>
+        </div>
+      )}
+      {msg && <p className="notice">{msg}</p>}
+    </div>
+  );
+}
+
+function SubstitutionsPanel() {
+  const [subs, setSubs] = useState<
+    { id: string; from: { name: string }; to: { name: string }; recipe: { name: string } | null }[]
+  >();
+  const load = () => api.get<typeof subs>('/substitutions').then(setSubs).catch(() => setSubs([]));
+  useEffect(() => {
+    load();
+  }, []);
+  async function revert(id: string) {
+    await api.del(`/substitutions/${id}`);
+    load();
+  }
+  return (
+    <div className="card add-card">
+      <div className="card-title">🔄 Ingredient substitutions</div>
+      {subs && subs.length === 0 && (
+        <p className="muted">
+          None yet. On any recipe, tap 🔄 next to an ingredient to always swap it (e.g. Olive
+          Oil → Avocado Oil). It's remembered org-wide until you revert it here.
+        </p>
+      )}
+      <ul className="sub-list">
+        {subs?.map((s) => (
+          <li key={s.id}>
+            <span>
+              {s.from.name} → <strong>{s.to.name}</strong>{' '}
+              <span className="muted">{s.recipe ? `(only ${s.recipe.name})` : '(everywhere)'}</span>
+            </span>
+            <button className="entry-x" title="Revert" onClick={() => revert(s.id)}>
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Settings() {
   const [data, setData] = useState<SettingsData>();
   const [saved, setSaved] = useState(false);
@@ -236,6 +358,8 @@ export function Settings() {
   return (
     <section className="page">
       <h2>Settings</h2>
+      <OrgPanel />
+      <SubstitutionsPanel />
       <label className="field">
         <span>Household name</span>
         <input value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} />
