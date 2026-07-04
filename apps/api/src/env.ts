@@ -36,6 +36,12 @@ const envSchema = z.object({
   WEB_BASE_URL: z.string().default('http://localhost:8090'),
   SESSION_DAYS: z.coerce.number().default(90), // device cache window (~3 months)
   MAGIC_LINK_MINUTES: z.coerce.number().default(20),
+
+  // Cloudflare Access (Zero Trust) in front of the app. When both are set, requests carrying
+  // a verified Cf-Access-Jwt-Assertion are logged in as that email. Team domain e.g.
+  // "yourteam.cloudflareaccess.com"; AUD is the Access application's Audience tag.
+  CF_ACCESS_TEAM_DOMAIN: z.string().default(''),
+  CF_ACCESS_AUD: z.string().default(''),
 });
 
 export const env = envSchema.parse(process.env);

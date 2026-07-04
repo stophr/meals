@@ -140,6 +140,18 @@ export async function authRoutes(app: FastifyInstance) {
     return { invited: email, role, devUrl: r.devUrl };
   });
 
+  // chef only: change a member's role (e.g. promote an auto-provisioned base user)
+  app.patch('/users/:id/role', async (req, reply) => {
+    const p = await getPrincipal(req);
+    if (!can(p, 'manageUsers')) {
+      reply.code(403);
+      return { message: 'Only a chef can change roles.' };
+    }
+    const { id } = req.params as { id: string };
+    const { role } = z.object({ role: z.enum(['base', 'sous_chef', 'chef']) }).parse(req.body);
+    return prisma.user.update({ where: { id }, data: { role }, select: { id: true, email: true, role: true } });
+  });
+
   // chef only: remove a user (not yourself)
   app.delete('/users/:id', async (req, reply) => {
     const p = await getPrincipal(req);

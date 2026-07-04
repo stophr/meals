@@ -39,6 +39,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OCR_MODEL: ${OCR_MODEL:-claude-sonnet-5}
       OCR_ESCALATION_MODEL: ${OCR_ESCALATION_MODEL:-claude-opus-4-8}
+      # Cloudflare Access: set both to log users in as their authenticated email.
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
       NODE_ENV: production
     extra_hosts:
       - 'host.docker.internal:host-gateway'
