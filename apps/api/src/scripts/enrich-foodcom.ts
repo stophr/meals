@@ -27,6 +27,7 @@ function foodcomUrl(externalId: string | null, sourceUrl: string | null): string
 async function main() {
   const delay = Number(arg('--delay') ?? 2000);
   const limit = Number(arg('--limit') ?? Infinity);
+  const force = process.argv.includes('--force'); // re-process already-tagged recipes
   // The active tenant is the oldest household (same as the API's getHousehold()).
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
   const ctx = await loadLinkContext(household.id);
@@ -35,7 +36,7 @@ async function main() {
     where: {
       householdId: household.id,
       sourceName: 'Food.com',
-      NOT: { tags: { has: 'enriched' } },
+      ...(force ? {} : { NOT: { tags: { has: 'enriched' } } }),
     },
     select: {
       id: true,
@@ -71,7 +72,9 @@ async function main() {
       const { enriched: didEnrich } = await enrichRecipe(r, normalized, ctx);
       didEnrich ? enriched++ : unchanged++;
       // Mark processed (preserve existing tags).
-      await prisma.recipe.update({ where: { id: r.id }, data: { tags: { push: 'enriched' } } });
+      if (!force) {
+        await prisma.recipe.update({ where: { id: r.id }, data: { tags: { push: 'enriched' } } });
+      }
       consecFail = 0;
     } catch {
       failed++;

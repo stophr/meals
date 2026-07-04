@@ -78,10 +78,17 @@ export async function enrichRecipe(
   normalized: NormalizedRecipe,
   ctx: LinkContext,
 ): Promise<{ enriched: boolean }> {
-  const existingCount = await prisma.recipeIngredient.count({ where: { recipeId: recipe.id } });
-  if (normalized.ingredientLines.length <= existingCount) return { enriched: false };
-
   const rows = buildIngredientRows(normalized.ingredientLines, ctx);
+  const existing = await prisma.recipeIngredient.findMany({
+    where: { recipeId: recipe.id },
+    select: { unit: true },
+  });
+  // "Richer" = more ingredient lines OR more lines carrying a real measurement unit (the
+  // Food.com dataset is often unitless — "1 1/2 mayonnaise" — while the live page has "cups").
+  const withUnit = (u: string) => u !== 'EACH';
+  const liveUnits = rows.filter((r) => withUnit(r.unit as string)).length;
+  const existingUnits = existing.filter((e) => withUnit(e.unit as string)).length;
+  if (rows.length <= existing.length && liveUnits <= existingUnits) return { enriched: false };
   await prisma.$transaction(async (tx) => {
     await tx.recipeIngredient.deleteMany({ where: { recipeId: recipe.id } });
     await tx.recipe.update({

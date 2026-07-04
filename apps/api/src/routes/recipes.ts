@@ -55,7 +55,30 @@ export async function recipeRoutes(app: FastifyInstance) {
     const household = await getHousehold(req);
 
     const where: Prisma.RecipeWhereInput = {
-      householdId: household.id,
+      // Visibility: the GLOBAL shared corpus plus this org's own (private) recipes.
+      AND: [
+        { OR: [{ isShared: true }, { householdId: household.id }] },
+        ...(query.q
+          ? [
+              {
+                OR: [
+                  { name: { contains: query.q, mode: 'insensitive' as const } },
+                  { cuisine: { contains: query.q, mode: 'insensitive' as const } },
+                  {
+                    ingredients: {
+                      some: {
+                        OR: [
+                          { freeText: { contains: query.q, mode: 'insensitive' as const } },
+                          { canonicalItem: { name: { contains: query.q, mode: 'insensitive' as const } } },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            ]
+          : []),
+      ],
       ...(query.cuisine ? { cuisine: { equals: query.cuisine, mode: 'insensitive' } } : {}),
       ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
       ...(query.tag ? { tags: { has: query.tag } } : {}),
@@ -64,24 +87,6 @@ export async function recipeRoutes(app: FastifyInstance) {
       // "Cheapest" is only meaningful when most ingredients are priced — otherwise a recipe
       // looks cheap simply because we haven't priced its ingredients yet.
       ...(query.sort === 'cheapest' ? { costCoverage: { gte: 0.6 }, estCostPerServing: { not: null } } : {}),
-      ...(query.q
-        ? {
-            OR: [
-              { name: { contains: query.q, mode: 'insensitive' } },
-              { cuisine: { contains: query.q, mode: 'insensitive' } },
-              {
-                ingredients: {
-                  some: {
-                    OR: [
-                      { freeText: { contains: query.q, mode: 'insensitive' } },
-                      { canonicalItem: { name: { contains: query.q, mode: 'insensitive' } } },
-                    ],
-                  },
-                },
-              },
-            ],
-          }
-        : {}),
     };
 
     const orderBy: Prisma.RecipeOrderByWithRelationInput[] =
@@ -161,15 +166,17 @@ export async function recipeRoutes(app: FastifyInstance) {
   // Facet values for filter UIs. groupBy/unnest so this stays cheap at catalog scale.
   app.get('/recipes/meta', async (req) => {
     const household = await getHousehold(req);
+    // Facets span the visible corpus: shared recipes + this org's own.
+    const visible = { OR: [{ isShared: true }, { householdId: household.id }] };
     const [cuisineRows, categoryRows, tagRows] = await Promise.all([
       prisma.recipe.groupBy({
         by: ['cuisine'],
-        where: { householdId: household.id, cuisine: { not: null } },
+        where: { ...visible, cuisine: { not: null } },
         _count: true,
       }),
       prisma.recipe.groupBy({
         by: ['category'],
-        where: { householdId: household.id, category: { not: null } },
+        where: { ...visible, category: { not: null } },
         _count: true,
         orderBy: { _count: { category: 'desc' } },
         take: 60,
@@ -177,7 +184,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       prisma.$queryRaw<{ tag: string }[]>`
         SELECT tag FROM (
           SELECT unnest(tags) AS tag, count(*) AS n
-          FROM "Recipe" WHERE "householdId" = ${household.id}
+          FROM "Recipe" WHERE ("isShared" = true OR "householdId" = ${household.id})
           GROUP BY 1 ORDER BY n DESC LIMIT 100
         ) t ORDER BY tag`,
     ]);
