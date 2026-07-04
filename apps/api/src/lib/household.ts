@@ -1,10 +1,21 @@
+import type { FastifyRequest } from 'fastify';
 import { prisma } from '@meals/db';
 import type { Household } from '@meals/db';
+import { resolvePrincipal } from './principal.js';
 
-// MVP is single-household with no auth. Resolve (or lazily create) the one household every
-// request operates on. Phase 3 replaces this with the authenticated user's household.
-export async function getHousehold(): Promise<Household> {
-  const existing = await prisma.household.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (existing) return existing;
-  return prisma.household.create({ data: { name: 'My Household' } });
+// Resolve the tenant (org = household) a request operates on — from the AUTHENTICATED user, so
+// each org sees only its own pantry, providers, prices, shopping lists, and Fry's connection.
+export async function getHousehold(req: FastifyRequest): Promise<Household> {
+  const { principal } = await resolvePrincipal(req);
+  if (!principal) {
+    const e = new Error('You are signed in but not a member of an org.') as Error & { statusCode?: number };
+    e.statusCode = 403;
+    throw e;
+  }
+  return prisma.household.findUniqueOrThrow({ where: { id: principal.householdId } });
+}
+
+/** The primary (oldest) household — for CLI scripts / non-request contexts only. */
+export async function primaryHousehold(): Promise<Household> {
+  return prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
 }

@@ -14,7 +14,7 @@ export async function itemRoutes(app: FastifyInstance) {
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface
   // first — typing "sugar" returns "Sugar" ahead of "Brown Sugar", "Demerara Sugar", etc.
   app.get('/items', async (req) => {
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const { q } = req.query as { q?: string };
     if (!q) {
       return prisma.canonicalItem.findMany({
@@ -56,7 +56,7 @@ export async function itemRoutes(app: FastifyInstance) {
 
   app.post('/items', async (req, reply) => {
     const data = canonicalItemCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const base = data.baseUnit ? toBaseQuantity(1, data.baseUnit) : undefined;
     // Resolve via the alias index first so "Pinch Of Sugar" returns the existing "Sugar"
     // instead of spawning another variant.

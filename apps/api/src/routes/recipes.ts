@@ -52,7 +52,7 @@ export async function recipeRoutes(app: FastifyInstance) {
   // ---- Catalog search: q + facets + sort + pantry coverage ----
   app.get('/recipes', async (req) => {
     const query = recipeQuerySchema.parse(req.query);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
 
     const where: Prisma.RecipeWhereInput = {
       householdId: household.id,
@@ -159,8 +159,8 @@ export async function recipeRoutes(app: FastifyInstance) {
   });
 
   // Facet values for filter UIs. groupBy/unnest so this stays cheap at catalog scale.
-  app.get('/recipes/meta', async () => {
-    const household = await getHousehold();
+  app.get('/recipes/meta', async (req) => {
+    const household = await getHousehold(req);
     const [cuisineRows, categoryRows, tagRows] = await Promise.all([
       prisma.recipe.groupBy({
         by: ['cuisine'],
@@ -192,7 +192,7 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.get('/recipes/discover', async (req) => {
     const { q } = req.query as { q?: string };
     if (!q?.trim()) return { results: [] };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const results = await searchMeals(q.trim());
     const existing = await prisma.recipe.findMany({
       where: { householdId: household.id, externalId: { in: results.map((r) => r.externalId) } },
@@ -206,7 +206,7 @@ export async function recipeRoutes(app: FastifyInstance) {
 
   app.post('/recipes/discover/ingest', async (req, reply) => {
     const { externalId } = discoverIngestSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const normalized = await getMeal(externalId);
     const { recipe, duplicate } = await ingestRecipe(normalized, household.id);
     reply.code(duplicate ? 200 : 201);
@@ -216,7 +216,7 @@ export async function recipeRoutes(app: FastifyInstance) {
   // ---- URL import (schema.org JSON-LD — works on most recipe sites, carries star ratings) ----
   app.post('/recipes/import', async (req, reply) => {
     const { url } = recipeImportSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     let normalized;
     try {
       normalized = await importRecipeFromUrl(url);
@@ -264,7 +264,7 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.post('/recipes/:id/cook', async (req) => {
     const { id } = req.params as { id: string };
     const body = cookRecipeSchema.parse(req.body ?? {});
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const recipe = await prisma.recipe.findUniqueOrThrow({
       where: { id },
       include: ingredientInclude,
@@ -293,7 +293,7 @@ export async function recipeRoutes(app: FastifyInstance) {
   // ---- CRUD (manual entry stays the base path) ----
   app.get('/recipes/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const recipe = await prisma.recipe.findUniqueOrThrow({
       where: { id },
       include: { ingredients: { include: { canonicalItem: true } } },
@@ -320,7 +320,7 @@ export async function recipeRoutes(app: FastifyInstance) {
 
   app.post('/recipes', async (req, reply) => {
     const data = recipeCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.recipe.create({
       data: {

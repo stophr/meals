@@ -29,7 +29,7 @@ function startOfToday(): Date {
 
 export async function shoppingListRoutes(app: FastifyInstance) {
   app.get('/shopping-lists', async (req) => {
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const q = req.query as { archived?: string };
     // Auto-archive any list whose covered horizon is now in the past.
     await prisma.shoppingList.updateMany({
@@ -50,7 +50,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   // Upcoming days for the "going to the store" picker: each day with its queued meals and
   // whether it's already locked by a prior (active) list — locked days can't be re-selected.
   app.get('/shopping-lists/upcoming-days', async (req) => {
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const horizon = Math.min(60, Math.max(1, Number((req.query as { days?: string }).days ?? 21)));
     const start = startOfToday();
     const end = new Date(start.getTime() + horizon * 86_400_000 - 1);
@@ -86,7 +86,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
 
   app.post('/shopping-lists', async (req, reply) => {
     const data = shoppingListCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.shoppingList.create({
       data: { householdId: household.id, name: data.name, mealPlanId: data.mealPlanId },
@@ -97,7 +97,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   // (skipping meals already bought for), then LOCK those days.
   app.post('/shopping-lists/from-queue', async (req, reply) => {
     const { days, dates } = shopFromQueueSchema.parse(req.body ?? {});
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const locks = await lockedDays(household.id);
 
     // Chosen day-keys: explicit picks (day-picker) or the next N days. Locked days dropped.
@@ -160,7 +160,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.post('/shopping-lists/:id/items', async (req, reply) => {
     const { id } = req.params as { id: string };
     const data = shoppingListItemAddSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const resolved = await resolveCanonicalItem(household.id, data.name);
     const base = toBaseQuantity(data.quantity, data.unit);
     reply.code(201);
@@ -181,7 +181,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.post('/shopping-lists/:id/optimize', async (req) => {
     const { id } = req.params as { id: string };
     const q = req.query as { timeValue?: string; maxStores?: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
 
     const timeValue = q.timeValue ? Number(q.timeValue) : Number(household.timeValuePerMinute);
     const maxStores = q.maxStores ? Number(q.maxStores) : undefined;
@@ -221,7 +221,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   // Per-item provider options (every store × size with a current price).
   app.get('/shopping-lists/:id/options', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     return { items: await computeItemOptions(household.id, id) };
   });
 
@@ -232,7 +232,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const body = req.body as { mode?: string; itemId?: string } | null;
     const mode = (body?.mode === 'unit' ? 'unit' : 'total') as 'unit' | 'total';
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const all = await computeItemOptions(household.id, id);
     const targets = body?.itemId ? all.filter((i) => i.itemId === body.itemId) : all;
 
@@ -262,7 +262,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   // Split the list per store, with totals and whether each store supports cart fill.
   app.post('/shopping-lists/:id/build', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const items = await computeItemOptions(household.id, id);
     const providers = await prisma.provider.findMany({ where: { householdId: household.id } });
     const krogerToken = await prisma.integrationToken.findUnique({

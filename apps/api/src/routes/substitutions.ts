@@ -5,8 +5,8 @@ import { getHousehold } from '../lib/household.js';
 
 export async function substitutionRoutes(app: FastifyInstance) {
   // Every substitution rule for the org (global + recipe-scoped), newest first.
-  app.get('/substitutions', async () => {
-    const household = await getHousehold();
+  app.get('/substitutions', async (req) => {
+    const household = await getHousehold(req);
     const rows = await prisma.ingredientSubstitution.findMany({
       where: { householdId: household.id },
       include: {
@@ -28,7 +28,7 @@ export async function substitutionRoutes(app: FastifyInstance) {
   // ingredient just changes the target (remembered until reverted/changed).
   app.post('/substitutions', async (req, reply) => {
     const data = substitutionCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     if (data.fromCanonicalItemId === data.toCanonicalItemId) {
       reply.code(422);
       return { message: 'Pick a different ingredient to substitute with.' };

@@ -39,8 +39,8 @@ async function currentPlan(householdId: string) {
 }
 
 export async function mealPlanRoutes(app: FastifyInstance) {
-  app.get('/meal-plans', async () => {
-    const household = await getHousehold();
+  app.get('/meal-plans', async (req) => {
+    const household = await getHousehold(req);
     return prisma.mealPlan.findMany({
       where: { householdId: household.id },
       include: { entries: { include: { recipe: true } } },
@@ -58,7 +58,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.post('/meal-plans', async (req, reply) => {
     const data = mealPlanCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.mealPlan.create({
       data: { householdId: household.id, name: data.name, startDate: data.startDate, endDate: data.endDate },
@@ -69,7 +69,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const data = mealPlanEntryCreateSchema.parse(req.body);
     if (data.date) {
-      const household = await getHousehold();
+      const household = await getHousehold(req);
       const locks = await lockedDays(household.id);
       if (locks.has(dayKey(data.date))) {
         reply.code(409);
@@ -91,7 +91,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // Stage a recipe into the current plan as unassigned (the "Add to plan" button).
   app.post('/meal-plans/stage', async (req, reply) => {
     const data = stageRecipeSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const plan = await currentPlan(household.id);
     const recipe = await prisma.recipe.findUniqueOrThrow({ where: { id: data.recipeId } });
     const entry = await prisma.mealPlanEntry.create({
@@ -116,7 +116,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       reply.code(409);
       return { message: 'This meal is locked — a shopping list already bought for it.' };
     }
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const locks = await lockedDays(household.id);
     const blocked = dates.filter((d) => locks.has(dayKey(d)));
     if (blocked.length) {
@@ -159,8 +159,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   });
 
   // ---- Recurring meals (rules) ----
-  app.get('/meal-rules', async () => {
-    const household = await getHousehold();
+  app.get('/meal-rules', async (req) => {
+    const household = await getHousehold(req);
     return prisma.mealRule.findMany({
       where: { householdId: household.id, active: true },
       include: { recipe: { select: { id: true, name: true } } },
@@ -170,7 +170,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.post('/meal-rules', async (req, reply) => {
     const data = mealRuleCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.mealRule.create({
       data: { ...data, householdId: household.id },
@@ -187,7 +187,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // Materialize active rules into an existing plan's date range (idempotent per recipe+date).
   app.post('/meal-plans/:id/apply-rules', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const plan = await prisma.mealPlan.findUniqueOrThrow({
       where: { id },
       include: { entries: true },
@@ -226,7 +226,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       return { message: 'This meal is locked — a shopping list already bought for it.' };
     }
     if (patch.date) {
-      const household = await getHousehold();
+      const household = await getHousehold(req);
       const locks = await lockedDays(household.id);
       if (locks.has(dayKey(patch.date))) {
         reply.code(409);
@@ -268,7 +268,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // then greedy-pick with variety constraints. Regenerating gives a different week (jitter).
   app.post('/meal-plans/generate', async (req, reply) => {
     const opts = generateMealPlanSchema.parse(req.body ?? {});
-    const household = await getHousehold();
+    const household = await getHousehold(req);
 
     // Dinner slots use a main-course category ALLOWLIST. Food.com categories are too messy
     // for a denylist (they include "Household Cleaner", "Teeth Whitener", "Bath/Beauty"…) —
@@ -477,7 +477,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // the primary path now).
   app.post('/meal-plans/:id/generate-list', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const plan = await prisma.mealPlan.findUniqueOrThrow({
       where: { id },
       include: {
@@ -495,8 +495,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // The rolling meal queue: unassigned staging + upcoming dated meals + locked days.
   // The cutoff has a 36h grace window: clients send calendar days as local-noon dates, so a
   // strict server-midnight (UTC) cutoff would hide "today" entries for western timezones.
-  app.get('/queue', async () => {
-    const household = await getHousehold();
+  app.get('/queue', async (req) => {
+    const household = await getHousehold(req);
     const windowStart = new Date(Date.now() - 36 * 3_600_000);
     const recipeSelect = {
       select: { id: true, name: true, externalRating: true, imageUrl: true, servings: true },

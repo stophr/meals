@@ -11,14 +11,14 @@ import { getHousehold } from '../lib/household.js';
 import { recordProviderPrices } from '../lib/costcoPrices.js';
 
 export async function providerRoutes(app: FastifyInstance) {
-  app.get('/providers', async () => {
-    const household = await getHousehold();
+  app.get('/providers', async (req) => {
+    const household = await getHousehold(req);
     return prisma.provider.findMany({ where: { householdId: household.id }, orderBy: { name: 'asc' } });
   });
 
   app.post('/providers', async (req, reply) => {
     const data = providerCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.provider.create({ data: { ...data, householdId: household.id } });
   });
@@ -80,7 +80,7 @@ export async function providerRoutes(app: FastifyInstance) {
   app.post('/providers/:id/bulk-prices', async (req, reply) => {
     const { id } = req.params as { id: string };
     const { items } = bulkPricesSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     try {
       const res = await recordProviderPrices(household.id, id, items, {
         source: PriceSource.MANUAL,

@@ -29,9 +29,9 @@ const pendingStates = new Map<string, number>();
 
 export async function integrationRoutes(app: FastifyInstance) {
   // ---- Kroger / Fry's ----
-  app.get('/integrations/kroger/status', async () => {
+  app.get('/integrations/kroger/status', async (req) => {
     const cfg = krogerConfig();
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const token = await prisma.integrationToken.findUnique({
       where: { householdId_kind: { householdId: household.id, kind: 'kroger' } },
     });
@@ -98,7 +98,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     }
     pendingStates.delete(state);
     const tokens = await exchangeCode(cfg, code);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     await prisma.integrationToken.upsert({
       where: { householdId_kind: { householdId: household.id, kind: 'kroger' } },
       create: {
@@ -156,7 +156,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       return { message: 'Kroger not configured' };
     }
     const { id } = req.params as { id: string };
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const userToken = await getUserToken(cfg, household.id);
     if (!userToken) {
       reply.code(401);
@@ -196,7 +196,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // ---- Fry's digital coupons (fetched by the host-side Playwright script; clipping is
   // approval-gated: the script only clips status=approved) ----
   app.get('/integrations/kroger/coupons', async (req) => {
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const { status } = req.query as { status?: string };
     const now = new Date();
     return prisma.krogerCoupon.findMany({
@@ -221,8 +221,8 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   // Bulk-approve everything matched to the household's items (still requires the clip run).
-  app.post('/integrations/kroger/coupons/approve-matched', async () => {
-    const household = await getHousehold();
+  app.post('/integrations/kroger/coupons/approve-matched', async (req) => {
+    const household = await getHousehold(req);
     const res = await prisma.krogerCoupon.updateMany({
       where: { householdId: household.id, status: 'proposed', matchedItemName: { not: null } },
       data: { status: 'approved' },
@@ -233,7 +233,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   // Costco price import from the bookmarklet (paste). Records under the Costco provider.
   app.post('/integrations/costco/receipts', async (req, reply) => {
     const data = costcoImportSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     try {
       const res = await recordCostcoPrices(household.id, data.items);
       return res;

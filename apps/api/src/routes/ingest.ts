@@ -20,7 +20,7 @@ export async function ingestRoutes(app: FastifyInstance) {
       reply.code(503);
       return { message: 'OCR unavailable: ANTHROPIC_API_KEY not configured' };
     }
-    const household = await getHousehold();
+    const household = await getHousehold(req);
 
     // Collect the uploaded file + providerId field from the multipart body.
     let providerId: string | undefined;
@@ -107,8 +107,8 @@ export async function ingestRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get('/jobs', async () => {
-    const household = await getHousehold();
+  app.get('/jobs', async (req) => {
+    const household = await getHousehold(req);
     return prisma.ingestionJob.findMany({
       where: { householdId: household.id },
       orderBy: { createdAt: 'desc' },
@@ -121,8 +121,8 @@ export async function ingestRoutes(app: FastifyInstance) {
     return prisma.ingestionJob.findUniqueOrThrow({ where: { id }, include: { lines: true } });
   });
 
-  app.get('/review/pending', async () => {
-    const household = await getHousehold();
+  app.get('/review/pending', async (req) => {
+    const household = await getHousehold(req);
     return prisma.extractionLine.findMany({
       where: { status: 'pending', job: { householdId: household.id } },
       include: { job: true },

@@ -1,7 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import { prisma } from '@meals/db';
 import type { User } from '@meals/db';
-import { getHousehold } from './household.js';
 import { accessConfigured, emailFromAccessJwt } from './cloudflareAccess.js';
 import { isRole, type Principal, type Role } from './permissions.js';
 
@@ -52,8 +51,8 @@ export async function resolvePrincipal(
     return user ? { principal: principalOf(user) } : { guestEmail: email };
   }
 
-  // Fallback (no CF header — LAN/localhost, not through the tunnel): the default org's admin.
-  const household = await getHousehold();
+  // Fallback (no CF header — LAN/localhost, not through the tunnel): the primary org's admin.
+  const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
   const chef =
     (await prisma.user.findFirst({
       where: { householdId: household.id },

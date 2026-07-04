@@ -15,8 +15,8 @@ import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { env } from '../env.js';
 
 export async function inventoryRoutes(app: FastifyInstance) {
-  app.get('/inventory', async () => {
-    const household = await getHousehold();
+  app.get('/inventory', async (req) => {
+    const household = await getHousehold(req);
     return prisma.inventoryLot.findMany({
       where: { householdId: household.id },
       include: { canonicalItem: true },
@@ -26,7 +26,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
 
   app.post('/inventory', async (req, reply) => {
     const data = inventoryCreateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     reply.code(201);
     return prisma.inventoryLot.create({
       data: {
@@ -124,7 +124,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // Confirm & write reviewed items as inventory lots.
   app.post('/inventory/bulk-add', async (req, reply) => {
     const { items } = pantryBulkAddSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     let added = 0;
     for (const it of items) {
       const resolved = await resolveCanonicalItem(household.id, it.name);
@@ -148,7 +148,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // Deduct a quantity across lots, FIFO by expiry (used when a meal is cooked).
   app.post('/inventory/consume', async (req) => {
     const data = inventoryConsumeSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const base = toBaseQuantity(data.quantity, data.unit).baseQuantity;
     return consumeFromInventory(
       household.id,

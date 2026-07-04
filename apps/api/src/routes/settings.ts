@@ -4,8 +4,8 @@ import { settingsUpdateSchema } from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
 
 export async function settingsRoutes(app: FastifyInstance) {
-  app.get('/settings', async () => {
-    const household = await getHousehold();
+  app.get('/settings', async (req) => {
+    const household = await getHousehold(req);
     return {
       id: household.id,
       name: household.name,
@@ -18,7 +18,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.patch('/settings', async (req) => {
     const data = settingsUpdateSchema.parse(req.body);
-    const household = await getHousehold();
+    const household = await getHousehold(req);
     const updated = await prisma.household.update({
       where: { id: household.id },
       data: {
