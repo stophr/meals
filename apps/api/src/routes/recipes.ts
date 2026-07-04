@@ -15,7 +15,7 @@ import { getHousehold } from '../lib/household.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { pantryLots, consumeFromInventory } from '../lib/inventory.js';
 import { subMap, applySubs } from '../lib/substitutions.js';
-import { ingestRecipe } from '../lib/recipeIngest.js';
+import { ingestRecipe, externalIdForUrl } from '../lib/recipeIngest.js';
 import {
   loadItemPrices,
   costRecipe,
@@ -224,9 +224,33 @@ export async function recipeRoutes(app: FastifyInstance) {
       reply.code(422);
       return { message: err instanceof Error ? err.message : 'Import failed' };
     }
-    const { recipe, duplicate } = await ingestRecipe(normalized, household.id);
-    reply.code(duplicate ? 200 : 201);
-    return { ...recipe, duplicate };
+    // Tag Food.com URLs with foodcom:<id> so re-imports match the CSV-imported recipe and
+    // enrich it in place instead of duplicating.
+    normalized.externalId = normalized.externalId ?? externalIdForUrl(url);
+
+    const { recipe, duplicate, enriched } = await ingestRecipe(normalized, household.id);
+    if (enriched) {
+      // Refresh the stored cost estimate for the recipe we just filled in.
+      const full = await prisma.recipe.findUniqueOrThrow({
+        where: { id: recipe.id },
+        include: { ingredients: true },
+      });
+      const res = costRecipe(full.ingredients, full.servings || 1, await loadItemPrices(household.id));
+      if (res) {
+        await prisma.recipe.update({
+          where: { id: recipe.id },
+          data: {
+            estCostTotal: res.total.toFixed(2),
+            estCostPerServing: res.perServing.toFixed(2),
+            costCoverage: Math.round(res.coverage * 100) / 100,
+            promoIngredients: res.promoCount,
+            costUpdatedAt: new Date(),
+          },
+        });
+      }
+    }
+    reply.code(enriched || !duplicate ? 201 : 200);
+    return { ...recipe, duplicate, enriched: !!enriched };
   });
 
   // ---- Favorites & cooking ----

@@ -1,5 +1,5 @@
 import { prisma } from '@meals/db';
-import type { Recipe } from '@meals/db';
+import type { Recipe, Prisma } from '@meals/db';
 import {
   parseIngredientLine,
   complexityOf,
@@ -11,15 +11,104 @@ import type { NormalizedRecipe } from '@meals/ingestion';
 
 const normAlias = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
-// Turn a NormalizedRecipe (from JSON-LD import or TheMealDB discovery) into DB rows:
-// parse each free-text ingredient line, auto-link to canonical items where the fuzzy match
-// is confident, and keep the original line as freeText either way.
+// ---- Ingredient linking context (load once; reuse across many recipes) ----
 
+export interface LinkContext {
+  candidates: { productId: string; text: string }[];
+  aliasMap: Map<string, string>;
+}
+
+export async function loadLinkContext(householdId: string): Promise<LinkContext> {
+  const [items, aliasRows] = await Promise.all([
+    prisma.canonicalItem.findMany({ where: { householdId }, select: { id: true, name: true, brand: true } }),
+    prisma.ingredientAlias.findMany({ where: { householdId }, select: { rawName: true, canonicalItemId: true } }),
+  ]);
+  return {
+    candidates: items.map((i) => ({ productId: i.id, text: `${i.brand ?? ''} ${i.name}`.trim() })),
+    aliasMap: new Map(aliasRows.map((a) => [a.rawName, a.canonicalItemId])),
+  };
+}
+
+/** Parse + link free-text ingredient lines into ingredient rows (alias first, then fuzzy). */
+export function buildIngredientRows(
+  lines: string[],
+  ctx: LinkContext,
+): Omit<Prisma.RecipeIngredientCreateManyInput, 'recipeId'>[] {
+  return lines.map((line) => {
+    const p = parseIngredientLine(line);
+    const aliasHit = ctx.aliasMap.get(normAlias(p.name)) ?? ctx.aliasMap.get(ingredientKey(p.name));
+    const match = !aliasHit && ctx.candidates.length ? matchLine(p.name, ctx.candidates) : null;
+    const canonicalItemId = aliasHit ?? (match?.decision === 'auto' ? match.productId : null);
+    const quantity = p.quantity ?? 1;
+    const unit = p.unit ?? 'EACH';
+    return {
+      canonicalItemId,
+      freeText: line.slice(0, 500),
+      quantity: quantity.toString(),
+      unit,
+      baseQuantity: toBaseQuantity(quantity, unit).baseQuantity.toString(),
+      optional: p.optional,
+    };
+  });
+}
+
+/** foodcom:<id> for a food.com recipe URL, so re-imports match the CSV-imported recipe. */
+export function externalIdForUrl(url: string): string | undefined {
+  const m = url.match(/food\.com\/recipe\/(?:[a-z0-9-]*-)?(\d+)/i);
+  return m ? `foodcom:${m[1]}` : undefined;
+}
+
+export interface EnrichTarget {
+  id: string;
+  servings: number;
+  instructions: string | null;
+  imageUrl: string | null;
+  prepMinutes: number | null;
+  cuisine: string | null;
+  category: string | null;
+}
+
+/**
+ * Replace a recipe's ingredients from a fresher source ONLY when it's richer (more lines) — so
+ * re-importing a thin Food.com recipe from its live page fills in the missing ingredients
+ * without ever regressing a good one. Also refreshes instructions/servings/image/etc.
+ */
+export async function enrichRecipe(
+  recipe: EnrichTarget,
+  normalized: NormalizedRecipe,
+  ctx: LinkContext,
+): Promise<{ enriched: boolean }> {
+  const existingCount = await prisma.recipeIngredient.count({ where: { recipeId: recipe.id } });
+  if (normalized.ingredientLines.length <= existingCount) return { enriched: false };
+
+  const rows = buildIngredientRows(normalized.ingredientLines, ctx);
+  await prisma.$transaction(async (tx) => {
+    await tx.recipeIngredient.deleteMany({ where: { recipeId: recipe.id } });
+    await tx.recipe.update({
+      where: { id: recipe.id },
+      data: {
+        servings: normalized.servings ?? recipe.servings,
+        instructions: normalized.instructions ?? recipe.instructions,
+        imageUrl: normalized.imageUrl ?? recipe.imageUrl,
+        prepMinutes: normalized.prepMinutes ?? recipe.prepMinutes,
+        cuisine: normalized.cuisine ?? recipe.cuisine,
+        category: normalized.category ?? recipe.category,
+        complexity: complexityOf(normalized.ingredientLines.length, normalized.prepMinutes),
+        ingredients: { create: rows },
+      },
+    });
+  });
+  return { enriched: true };
+}
+
+/**
+ * Import a recipe: create it, or — when it already exists (same externalId/sourceUrl) — enrich
+ * it in place from the (richer) source instead of duplicating.
+ */
 export async function ingestRecipe(
   normalized: NormalizedRecipe,
   householdId: string,
-): Promise<{ recipe: Recipe; duplicate: boolean }> {
-  // Dedup: same external id or same source URL in this household.
+): Promise<{ recipe: Recipe; duplicate: boolean; enriched?: boolean }> {
   const existing = await prisma.recipe.findFirst({
     where: {
       householdId,
@@ -29,39 +118,14 @@ export async function ingestRecipe(
       ],
     },
   });
-  if (existing) return { recipe: existing, duplicate: true };
 
-  const items = await prisma.canonicalItem.findMany({ where: { householdId } });
-  const candidates = items.map((i) => ({
-    productId: i.id, // matcher field name; holds the canonical item id here
-    text: `${i.brand ?? ''} ${i.name}`.trim(),
-  }));
-  // Alias index: an exact/root alias hit is more reliable than fuzzy matching and keeps
-  // imports resolving to consolidated roots instead of re-introducing variants.
-  const aliasRows = await prisma.ingredientAlias.findMany({
-    where: { householdId },
-    select: { rawName: true, canonicalItemId: true },
-  });
-  const aliasMap = new Map(aliasRows.map((a) => [a.rawName, a.canonicalItemId]));
+  const ctx = await loadLinkContext(householdId);
 
-  const parsed = normalized.ingredientLines.map((line) => {
-    const p = parseIngredientLine(line);
-    // 1) alias by the parsed name or its deterministic root; 2) fall back to fuzzy match.
-    const aliasHit = aliasMap.get(normAlias(p.name)) ?? aliasMap.get(ingredientKey(p.name));
-    const match = !aliasHit && candidates.length ? matchLine(p.name, candidates) : null;
-    const canonicalItemId = aliasHit ?? (match?.decision === 'auto' ? match.productId : null);
-
-    const quantity = p.quantity ?? 1;
-    const unit = p.unit ?? 'EACH';
-    return {
-      canonicalItemId,
-      freeText: line,
-      quantity: quantity.toString(),
-      unit,
-      baseQuantity: toBaseQuantity(quantity, unit).baseQuantity.toString(),
-      optional: p.optional,
-    };
-  });
+  if (existing) {
+    const { enriched } = await enrichRecipe(existing, normalized, ctx);
+    const recipe = enriched ? await prisma.recipe.findUniqueOrThrow({ where: { id: existing.id } }) : existing;
+    return { recipe, duplicate: !enriched, enriched };
+  }
 
   const recipe = await prisma.recipe.create({
     data: {
@@ -80,7 +144,7 @@ export async function ingestRecipe(
       complexity: complexityOf(normalized.ingredientLines.length, normalized.prepMinutes),
       externalRating: normalized.externalRating,
       externalRatingCount: normalized.externalRatingCount,
-      ingredients: { create: parsed },
+      ingredients: { create: buildIngredientRows(normalized.ingredientLines, ctx) },
     },
   });
 
