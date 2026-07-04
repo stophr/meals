@@ -208,84 +208,188 @@ function CostcoImport() {
 
 const ROLE_LABEL: Record<string, string> = { base: 'Base', sous_chef: 'Sous chef', chef: 'Chef' };
 
+interface OrgUser {
+  id: string;
+  email: string;
+  role: string;
+  isAppAdmin: boolean;
+}
+
+/** Add / role / remove members of one org. householdId targets an org (app-admin); omit for own. */
+function UserManager({ householdId }: { householdId?: string }) {
+  const [users, setUsers] = useState<OrgUser[]>();
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('base');
+  const [err, setErr] = useState<string>();
+  const q = householdId ? `?householdId=${householdId}` : '';
+  const load = () => api.get<OrgUser[]>(`/users${q}`).then(setUsers).catch(() => setUsers([]));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [householdId]);
+
+  async function add() {
+    setErr(undefined);
+    try {
+      await api.post('/users', { email: email.trim(), role, ...(householdId ? { householdId } : {}) });
+      setEmail('');
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  async function setRoleFor(id: string, r: string) {
+    await api.patch(`/users/${id}/role`, { role: r });
+    load();
+  }
+  async function remove(id: string) {
+    await api.del(`/users/${id}`);
+    load();
+  }
+
+  return (
+    <div className="user-mgr">
+      <ul className="sub-list">
+        {users?.length === 0 && <li className="muted">No members yet.</li>}
+        {users?.map((u) => (
+          <li key={u.id}>
+            <span>
+              {u.email}
+              {u.isAppAdmin && ' 👑'}
+            </span>
+            <select
+              className="chip"
+              value={u.role}
+              disabled={u.isAppAdmin}
+              onChange={(e) => setRoleFor(u.id, e.target.value)}
+            >
+              <option value="base">base</option>
+              <option value="sous_chef">sous chef</option>
+              <option value="chef">chef</option>
+            </select>
+            {!u.isAppAdmin && (
+              <button className="entry-x" title="Remove" onClick={() => remove(u.id)}>
+                ✕
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="sheet-row">
+        <input
+          className="sheet-input sheet-input-wide"
+          placeholder="new member email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <select className="chip" value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="base">base</option>
+          <option value="sous_chef">sous chef</option>
+          <option value="chef">chef</option>
+        </select>
+        <button className="btn btn-inline" disabled={!email.trim()} onClick={add}>
+          Add
+        </button>
+      </div>
+      {err && <p className="notice">{err}</p>}
+    </div>
+  );
+}
+
+interface AdminOrg {
+  id: string;
+  name: string;
+  users: OrgUser[];
+}
+
+/** App-admin view: every org, its members, and creating new orgs. */
+function AdminOrgs() {
+  const [orgs, setOrgs] = useState<AdminOrg[]>();
+  const [name, setName] = useState('');
+  const [chefEmail, setChefEmail] = useState('');
+  const load = () => api.get<AdminOrg[]>('/orgs').then(setOrgs).catch(() => setOrgs([]));
+  useEffect(() => {
+    load();
+  }, []);
+  async function createOrg() {
+    await api.post('/orgs', { name: name.trim(), ...(chefEmail.trim() ? { chefEmail: chefEmail.trim() } : {}) });
+    setName('');
+    setChefEmail('');
+    load();
+  }
+  return (
+    <div>
+      <div className="section-label">All organizations</div>
+      {orgs?.map((o) => (
+        <details key={o.id} className="org-block">
+          <summary>
+            {o.name} <span className="muted">· {o.users.length} member(s)</span>
+          </summary>
+          <UserManager householdId={o.id} />
+        </details>
+      ))}
+      <div className="section-label">Create an org</div>
+      <div className="sheet-row">
+        <input
+          className="sheet-input"
+          placeholder="org name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <input
+          className="sheet-input"
+          placeholder="chef email (optional)"
+          value={chefEmail}
+          onChange={(e) => setChefEmail(e.target.value)}
+        />
+        <button className="btn btn-inline" disabled={!name.trim()} onClick={createOrg}>
+          Create
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OrgPanel() {
   const [me, setMe] = useState<{
-    email: string;
-    role: string;
-    isAppAdmin: boolean;
+    provisioned: boolean;
+    email?: string;
+    role?: string;
+    isAppAdmin?: boolean;
     org?: { name?: string } | null;
   }>();
-  const [msg, setMsg] = useState<string>();
-  const [invEmail, setInvEmail] = useState('');
-  const [invRole, setInvRole] = useState('base');
-  const [orgName, setOrgName] = useState('');
-  const [orgChef, setOrgChef] = useState('');
   useEffect(() => {
     api.get<typeof me>('/auth/me').then(setMe).catch(() => {});
   }, []);
   if (!me) return null;
 
-  async function inviteUser() {
-    await api.post('/users/invite', { email: invEmail, role: invRole });
-    setMsg(`Invited ${invEmail} as ${invRole}. (Email delivery pending pantrezy.com.)`);
-    setInvEmail('');
-  }
-  async function inviteOrg() {
-    await api.post('/orgs', { name: orgName, chefEmail: orgChef });
-    setMsg(`Created "${orgName}", invited ${orgChef} as chef. (Email delivery pending pantrezy.com.)`);
-    setOrgName('');
-    setOrgChef('');
-  }
-
   return (
     <div className="card add-card">
       <div className="card-title">🏛️ Organization</div>
-      <p>
-        {me.org?.name ?? 'Your org'} · <span className="role-badge">{ROLE_LABEL[me.role] ?? me.role}</span>
-        {me.isAppAdmin && ' · app admin'}
-      </p>
-      <p className="muted sheet-hint">
-        Passwordless sign-in (email magic links) is stubbed until pantrezy.com is live — see
-        docs/multi-tenancy.md.
-      </p>
-      {me.role === 'chef' && (
-        <div className="sheet-row">
-          <input
-            className="sheet-input sheet-input-wide"
-            placeholder="invite user email"
-            value={invEmail}
-            onChange={(e) => setInvEmail(e.target.value)}
-          />
-          <select className="chip" value={invRole} onChange={(e) => setInvRole(e.target.value)}>
-            <option value="base">base</option>
-            <option value="sous_chef">sous chef</option>
-            <option value="chef">chef</option>
-          </select>
-          <button className="btn btn-inline" disabled={!invEmail} onClick={inviteUser}>
-            Invite user
-          </button>
-        </div>
+      {!me.provisioned ? (
+        <p className="muted">
+          Signed in as <strong>{me.email}</strong>, but you're not a member of any org yet — ask
+          an app admin to add you.
+        </p>
+      ) : (
+        <>
+          <p>
+            {me.org?.name ?? 'Your org'} ·{' '}
+            <span className="role-badge">{ROLE_LABEL[me.role ?? ''] ?? me.role}</span>
+            {me.isAppAdmin && ' · app admin'}
+          </p>
+          {me.isAppAdmin ? (
+            <AdminOrgs />
+          ) : me.role === 'chef' ? (
+            <>
+              <div className="section-label">Members of your org</div>
+              <UserManager />
+            </>
+          ) : (
+            <p className="muted sheet-hint">Your chef manages members.</p>
+          )}
+        </>
       )}
-      {me.isAppAdmin && (
-        <div className="sheet-row">
-          <input
-            className="sheet-input"
-            placeholder="new org name"
-            value={orgName}
-            onChange={(e) => setOrgName(e.target.value)}
-          />
-          <input
-            className="sheet-input"
-            placeholder="chef email"
-            value={orgChef}
-            onChange={(e) => setOrgChef(e.target.value)}
-          />
-          <button className="btn btn-inline" disabled={!orgName || !orgChef} onClick={inviteOrg}>
-            Invite org
-          </button>
-        </div>
-      )}
-      {msg && <p className="notice">{msg}</p>}
     </div>
   );
 }

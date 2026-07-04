@@ -18,15 +18,21 @@ function principalOf(u: User): Principal {
 class Unauthorized extends Error {
   statusCode = 401;
 }
+class NotAMember extends Error {
+  statusCode = 403;
+  constructor(public authEmail: string) {
+    super('You are signed in but not a member of an org yet. Ask an admin to add you.');
+  }
+}
 
-// Resolve the caller, in priority order:
-//   1. A device session (Authorization: Bearer <sessionToken>) — for a future native app.
-//   2. Cloudflare Access — a verified Cf-Access-Jwt-Assertion logs the user in as that email
-//      (invited emails Access lets through are auto-provisioned as 'base'). A present-but-
-//      invalid token is a hard 401 so misconfiguration surfaces instead of silently admin-ing.
-//   3. No auth headers at all (LAN / localhost, direct — not through Cloudflare): fall back to
-//      the default org's admin so local dev keeps working.
-export async function getPrincipal(req: FastifyRequest): Promise<Principal> {
+/**
+ * Resolve the caller. Returns a full principal for a provisioned member, or `{ guestEmail }`
+ * for someone Cloudflare authenticated who is NOT yet a member (they must be added by an admin
+ * or chef — we do NOT auto-provision). Order: device session → Cloudflare Access → LAN fallback.
+ */
+export async function resolvePrincipal(
+  req: FastifyRequest,
+): Promise<{ principal?: Principal; guestEmail?: string }> {
   const auth = req.headers['authorization'];
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (req.headers['x-pantrezy-session'] as string | undefined);
 
@@ -34,24 +40,19 @@ export async function getPrincipal(req: FastifyRequest): Promise<Principal> {
     const session = await prisma.session.findUnique({ where: { token }, include: { user: true } });
     if (session && session.expiresAt > new Date()) {
       await prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } });
-      return principalOf(session.user);
+      return { principal: principalOf(session.user) };
     }
   }
 
-  // Cloudflare Access (present only on requests that came through the tunnel).
   const cfToken = req.headers['cf-access-jwt-assertion'] as string | undefined;
   if (accessConfigured() && cfToken) {
     const email = await emailFromAccessJwt(cfToken);
     if (!email) throw new Unauthorized('Cloudflare Access token failed verification');
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) return principalOf(existing);
-    // Access already gated this email (only invited addresses get through) — provision as base.
-    const household = await getHousehold();
-    const created = await prisma.user.create({ data: { householdId: household.id, email, role: 'base' } });
-    return principalOf(created);
+    const user = await prisma.user.findUnique({ where: { email } });
+    return user ? { principal: principalOf(user) } : { guestEmail: email };
   }
 
-  // Fallback (stub): the default org's app-admin (preferred), else its oldest chef.
+  // Fallback (no CF header — LAN/localhost, not through the tunnel): the default org's admin.
   const household = await getHousehold();
   const chef =
     (await prisma.user.findFirst({
@@ -61,11 +62,12 @@ export async function getPrincipal(req: FastifyRequest): Promise<Principal> {
     (await prisma.user.create({
       data: { householdId: household.id, email: `owner@${household.slug ?? 'default-org'}.local`, role: 'chef', isAppAdmin: true },
     }));
-  return {
-    userId: chef.id,
-    householdId: chef.householdId,
-    email: chef.email,
-    role: (isRole(chef.role) ? chef.role : 'chef') as Role,
-    isAppAdmin: chef.isAppAdmin,
-  };
+  return { principal: principalOf(chef) };
+}
+
+/** Require a provisioned member; 403 for an authenticated non-member. */
+export async function getPrincipal(req: FastifyRequest): Promise<Principal> {
+  const { principal, guestEmail } = await resolvePrincipal(req);
+  if (principal) return principal;
+  throw new NotAMember(guestEmail!);
 }

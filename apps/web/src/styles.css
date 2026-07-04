@@ -842,6 +842,19 @@ select.chip {
   font-size: 0.8rem;
   font-weight: 600;
 }
+.org-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 6px 0;
+}
+.org-block > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.user-mgr .sub-list li {
+  gap: 8px;
+}
 .sheet-check input {
   width: 18px;
   height: 18px;

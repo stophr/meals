@@ -1,4 +1,5 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import type { HealthResponse } from '@meals/shared';
 import { api } from './lib/api.js';
 import { useApi } from './lib/useApi.js';
@@ -27,8 +28,36 @@ const tabs = [
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ];
 
+/** Gate: an authenticated-but-not-provisioned user (Cloudflare let them in, no org membership)
+ * sees a message instead of a broken app. Members (any role) pass through. */
+function MemberGate({ children }: { children: ReactNode }) {
+  const { data, loading } = useApi<{ provisioned: boolean; email?: string }>(
+    () => api.get('/auth/me'),
+    [],
+  );
+  if (loading) return <p className="muted" style={{ padding: 24 }}>Loading…</p>;
+  if (data && data.provisioned === false) {
+    return (
+      <div className="app">
+        <Header />
+        <main className="app-main">
+          <section className="page">
+            <h2>Not a member yet</h2>
+            <p>
+              You're signed in as <strong>{data.email}</strong>, but you haven't been added to an
+              organization. Ask an app admin or a chef to add you, then reload.
+            </p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 export function App() {
   return (
+    <MemberGate>
     <div className="app">
       <Header />
       <main className="app-main">
@@ -50,5 +79,6 @@ export function App() {
         ))}
       </nav>
     </div>
+    </MemberGate>
   );
 }

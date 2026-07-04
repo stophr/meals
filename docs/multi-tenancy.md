@@ -41,7 +41,26 @@ fallback, so nothing is blocked by the stub.
   required for every request — today the stub fallback treats the caller as the default org's
   admin.
 
-## Passwordless auth (magic links)
+## Auth: Cloudflare Access (current)
+
+Authentication is delegated to **Cloudflare Access** (Zero Trust) in front of the tunnel. The
+user does email-OTP with Cloudflare; Access injects a signed `Cf-Access-Jwt-Assertion` header.
+`apps/api/src/lib/cloudflareAccess.ts` verifies it (jose, RS256, JWKS from the team domain,
+issuer + AUD checked) and `principal.ts` resolves the caller by that email.
+
+- **No auto-provisioning.** An Access-authenticated email that is not a `User` is a *guest* —
+  the API returns 403 for members-only routes and `/auth/me` reports `provisioned:false`; the
+  web shows a "not a member" gate. Members must be created explicitly (below).
+- **No email invites.** Cloudflare handles the login email, so members are created **directly**:
+  an app admin creates orgs + users in any org; a chef creates/manages users in their own org
+  (Settings → 🏛️ Organization). Endpoints: `GET/POST /orgs` (admin), `GET/POST /users`,
+  `PATCH /users/:id/role`, `DELETE /users/:id`.
+- **Config:** `CF_ACCESS_TEAM_DOMAIN` + `CF_ACCESS_AUD` (Access app's Audience tag). When unset
+  (local dev with no CF header), requests fall back to the default org's admin so on-box work
+  continues. **Keep the Cloudflare Access policy's email allowlist in sync with the app's user
+  list** (or automate later via the Cloudflare API from `POST /users`).
+
+## Native-app session path (magic links)
 
 No passwords. A short-lived **magic link** is emailed; following it mints a **`Session`** cached
 on the device for **~90 days** (`SESSION_DAYS`). Sessions are sent back as
