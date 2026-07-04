@@ -151,8 +151,12 @@ export function extractJsonLdBlocks(html: string): JsonValue[] {
   return blocks;
 }
 
-/** Fetch a page and normalize its schema.org Recipe. Throws if none is found. */
-export async function importRecipeFromUrl(url: string): Promise<NormalizedRecipe> {
+/**
+ * Fetch a page and return BOTH the raw schema.org Recipe JSON-LD node and the parsed recipe.
+ * Storing the raw node lets us re-parse locally (e.g. after fixing a parser bug) without
+ * re-crawling. Throws if no Recipe node is found.
+ */
+export async function fetchRecipeRaw(url: string): Promise<{ node: JsonObject; normalized: NormalizedRecipe }> {
   const res = await fetch(url, {
     headers: {
       // Recipe sites gate on UA; present as a regular browser.
@@ -169,9 +173,19 @@ export async function importRecipeFromUrl(url: string): Promise<NormalizedRecipe
   for (const block of extractJsonLdBlocks(html)) {
     const node = findRecipeNode(block);
     if (node) {
-      const recipe = mapJsonLdRecipe(node, url);
-      if (recipe.ingredientLines.length) return recipe;
+      const normalized = mapJsonLdRecipe(node, url);
+      if (normalized.ingredientLines.length) return { node, normalized };
     }
   }
   throw new Error('No schema.org Recipe JSON-LD found on that page');
+}
+
+/** Re-parse a previously-stored raw JSON-LD node — no network. */
+export function parseRecipeNode(node: unknown, sourceUrl: string): NormalizedRecipe {
+  return mapJsonLdRecipe(node as JsonObject, sourceUrl);
+}
+
+/** Fetch a page and normalize its schema.org Recipe. Throws if none is found. */
+export async function importRecipeFromUrl(url: string): Promise<NormalizedRecipe> {
+  return (await fetchRecipeRaw(url)).normalized;
 }

@@ -462,6 +462,18 @@ model Recipe {
   @@unique([householdId, externalId])
 }
 
+// Global cache of a recipe page's raw schema.org JSON-LD node, keyed by external id. Decouples
+// FETCH (slow, network, rate-limited) from PARSE (fast, local): the crawler stores raw once,
+// and any parser fix is applied by re-parsing the stored raw — no re-crawl. Source-level (not
+// per-org).
+model RecipeRawFetch {
+  id         String   @id @default(cuid())
+  externalId String   @unique // e.g. foodcom:184564
+  sourceUrl  String
+  raw        Json // the schema.org Recipe JSON-LD node
+  fetchedAt  DateTime @default(now())
+}
+
 model RecipeIngredient {
   id       String @id @default(cuid())
   recipeId String
