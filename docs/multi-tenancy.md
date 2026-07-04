@@ -15,15 +15,26 @@ fallback, so nothing is blocked by the stub.
   default. (Visibility filtering to `isShared OR owner` is a one-line query change to make when
   the second org lands — today there's one org so all recipes show.)
 
-### Deferred (safe while single-tenant, do before onboarding org #2)
+### Done (the multi-org migrations)
 
-1. **Global canonical items.** `CanonicalItem` is currently per-household. A *shared* recipe's
-   ingredient links point at the owner's canonical items, which another org can't resolve.
-   Promote canonical items (the store-agnostic ingredient dictionary) to global, keeping
-   inventory/prices/aliases/substitutions per-org. This is the biggest deferred migration.
-2. **Per-org recipe state.** `isFavorite`, `timesCooked`, `lastCookedAt`, and the cached
-   `estCost*` live on `Recipe` (fine for one org). Move them to a per-`(org, recipe)` join so
-   each tenant has its own favorites/cook counts and price-based cost (prices are per-org).
+1. **Global canonical items** ✅ — `CanonicalItem` + `IngredientAlias` are global (no
+   householdId). Shared recipes' ingredients resolve to items every org can stock/price;
+   inventory, provider products, prices, and substitutions stay per-org, referencing them.
+2. **Per-org favorites** ✅ — `RecipeFavorite (householdId, recipeId)`; `Recipe.isFavorite`
+   removed. `/recipes` returns `isFavorite` per org; the meal-plan generator scores the org's
+   favorites.
+3. **Sharing** ✅ — `Recipe.isShared`; new org recipes (manual + URL import) default **private**;
+   `POST /recipes/:id/share {shared}` (owner org only) publishes to the global corpus.
+
+### Still deferred
+
+- **Per-org cook state** — `timesCooked`/`lastCookedAt` (and the cached `estCost*`) still live on
+  the shared `Recipe`. Move to a per-`(org, recipe)` join so cook counts + price-based cost are
+  per-org (prices already are). Lower priority than the above.
+- **Per-org recipe edits** — editing a shared recipe currently edits the shared row. A per-org
+  override layer would let an org tweak a shared recipe for itself.
+- **By-id route scoping (IDOR)** — `GET /shopping-lists/:id`, `/recipes/:id` don't re-check the
+  household; low risk (unguessable cuids) but worth tightening.
 
 ## Roles
 

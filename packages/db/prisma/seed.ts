@@ -46,7 +46,6 @@ async function main() {
   }) {
     const item = await prisma.canonicalItem.create({
       data: {
-        householdId: household.id,
         name: opts.name,
         brand: opts.brand,
         category: opts.category,

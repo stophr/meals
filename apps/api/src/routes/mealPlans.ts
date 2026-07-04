@@ -302,9 +302,14 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       },
     } as const;
 
-    // Favorites always make the pool (category-filtered for dinner slots).
+    // Favorites (per-org) always make the pool (category-filtered for dinner slots).
+    const favIds = new Set(
+      (await prisma.recipeFavorite.findMany({ where: { householdId: household.id }, select: { recipeId: true } })).map(
+        (f) => f.recipeId,
+      ),
+    );
     for (const r of await prisma.recipe.findMany({
-      where: { householdId: household.id, isFavorite: true },
+      where: { id: { in: [...favIds] } },
       include,
       take: 100,
     })) {
@@ -376,7 +381,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
           ? Math.min(1, Math.log1p(r.externalRatingCount) / Math.log(50))
           : 0.6;
       let score = (r.externalRating ?? 3) * confidence;
-      if (opts.favoritesFirst && r.isFavorite) score += 2.5;
+      if (opts.favoritesFirst && favIds.has(r.id)) score += 2.5;
       if (opts.preferPantry) score += 3 * covFraction + (cov.cookable ? 1 : 0);
       if (opts.budget) {
         // Real cost dominates, but only trust it when the recipe is well-priced; partially

@@ -83,7 +83,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
       ...(query.tag ? { tags: { has: query.tag } } : {}),
       ...(query.complexity ? { complexity: query.complexity } : {}),
-      ...(query.favorite ? { isFavorite: true } : {}),
+      ...(query.favorite ? { favorites: { some: { householdId: household.id } } } : {}),
       // "Cheapest" is only meaningful when most ingredients are priced — otherwise a recipe
       // looks cheap simply because we haven't priced its ingredients yet.
       ...(query.sort === 'cheapest' ? { costCoverage: { gte: 0.6 }, estCostPerServing: { not: null } } : {}),
@@ -106,16 +106,19 @@ export async function recipeRoutes(app: FastifyInstance) {
               ? [{ complexity: 'asc' }, { name: 'asc' }]
               : [{ name: 'asc' }];
 
-    const [pantry, prices, subs] = await Promise.all([
+    const [pantry, prices, subs, favRows] = await Promise.all([
       pantryLots(household.id),
       loadItemPrices(household.id),
       subMap(household.id), // org-global substitutions
+      prisma.recipeFavorite.findMany({ where: { householdId: household.id }, select: { recipeId: true } }),
     ]);
-    const withCost = <T extends { ingredients: CostIngredient[]; servings: number }>(r: T) => {
+    const favIds = new Set(favRows.map((f) => f.recipeId));
+    const withCost = <T extends { id: string; ingredients: CostIngredient[]; servings: number }>(r: T) => {
       const ingredients = applySubs(r.ingredients as never[], subs) as typeof r.ingredients;
       const coverage = recipeCoverage(ingredients as never, pantry);
       return {
         ...r,
+        isFavorite: favIds.has(r.id), // per-org
         ingredients,
         coverage,
         cookTonightCost: cookTonightCost(
@@ -260,11 +263,31 @@ export async function recipeRoutes(app: FastifyInstance) {
     return { ...recipe, duplicate, enriched: !!enriched };
   });
 
-  // ---- Favorites & cooking ----
+  // ---- Favorites (per-org) & cooking ----
   app.post('/recipes/:id/favorite', async (req) => {
     const { id } = req.params as { id: string };
+    const household = await getHousehold(req);
+    const key = { householdId_recipeId: { householdId: household.id, recipeId: id } };
+    const existing = await prisma.recipeFavorite.findUnique({ where: key });
+    if (existing) {
+      await prisma.recipeFavorite.delete({ where: key });
+      return { isFavorite: false };
+    }
+    await prisma.recipeFavorite.create({ data: { householdId: household.id, recipeId: id } });
+    return { isFavorite: true };
+  });
+
+  // Share a recipe to the global corpus, or make it private again. Owner org only.
+  app.post('/recipes/:id/share', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold(req);
+    const shared = (req.body as { shared?: boolean } | null)?.shared ?? true;
     const recipe = await prisma.recipe.findUniqueOrThrow({ where: { id } });
-    return prisma.recipe.update({ where: { id }, data: { isFavorite: !recipe.isFavorite } });
+    if (recipe.householdId !== household.id) {
+      reply.code(403);
+      return { message: 'Only the org that added a recipe can share it.' };
+    }
+    return prisma.recipe.update({ where: { id }, data: { isShared: shared } });
   });
 
   // Cook from the pantry: consume linked ingredients FIFO, bump popularity counters.
@@ -305,15 +328,20 @@ export async function recipeRoutes(app: FastifyInstance) {
       where: { id },
       include: { ingredients: { include: { canonicalItem: true } } },
     });
-    const [pantry, prices, subs] = await Promise.all([
+    const [pantry, prices, subs, fav] = await Promise.all([
       pantryLots(household.id),
       loadItemPrices(household.id),
       subMap(household.id, id), // global + this-recipe substitutions
+      prisma.recipeFavorite.findUnique({
+        where: { householdId_recipeId: { householdId: household.id, recipeId: id } },
+      }),
     ]);
     const ingredients = applySubs(recipe.ingredients, subs);
     const coverage = recipeCoverage(ingredients, pantry);
     return {
       ...recipe,
+      isFavorite: !!fav, // per-org
+      canShare: recipe.householdId === household.id, // owner org can toggle sharing
       ingredients,
       coverage,
       cookTonightCost: cookTonightCost(
@@ -332,6 +360,7 @@ export async function recipeRoutes(app: FastifyInstance) {
     return prisma.recipe.create({
       data: {
         householdId: household.id,
+        isShared: false, // private to the org until explicitly shared
         name: data.name,
         servings: data.servings,
         instructions: data.instructions,

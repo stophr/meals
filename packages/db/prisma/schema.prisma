@@ -110,6 +110,7 @@ model Household {
   integrationTokens IntegrationToken[]
   krogerCoupons  KrogerCoupon[]
   substitutions  IngredientSubstitution[]
+  recipeFavorites RecipeFavorite[]
   magicLinks     MagicLink[]
 }
 
@@ -432,7 +433,6 @@ model Recipe {
   // External stars (from the source site) vs local signals.
   externalRating      Float? // 0..5
   externalRatingCount Int?
-  isFavorite          Boolean   @default(false)
   timesCooked         Int       @default(0)
   lastCookedAt        DateTime?
 
@@ -451,13 +451,26 @@ model Recipe {
   mealPlanEntries MealPlanEntry[]
   mealRules       MealRule[]
   substitutions   IngredientSubstitution[]
+  favorites       RecipeFavorite[]
 
   @@index([householdId])
   @@index([householdId, cuisine])
   @@index([householdId, category])
-  @@index([householdId, isFavorite])
+  @@index([isShared])
   // Unique per household so bulk imports can dedup with skip semantics (NULLs exempt).
   @@unique([householdId, externalId])
+}
+
+// Per-org favorite. Favorites are org-scoped even though recipes are shared globally.
+model RecipeFavorite {
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  recipeId    String
+  recipe      Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([householdId, recipeId])
+  @@index([recipeId])
 }
 
 // Global cache of a recipe page's raw schema.org JSON-LD node, keyed by external id. Decouples

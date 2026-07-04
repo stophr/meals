@@ -137,6 +137,7 @@ export async function ingestRecipe(
   const recipe = await prisma.recipe.create({
     data: {
       householdId,
+      isShared: false, // private to the importing org until explicitly shared
       name: normalized.name,
       servings: normalized.servings ?? 4,
       instructions: normalized.instructions,

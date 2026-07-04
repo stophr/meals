@@ -17,6 +17,8 @@ interface RecipeRow {
   externalRating?: number | null;
   externalRatingCount?: number | null;
   isFavorite: boolean;
+  isShared?: boolean;
+  canShare?: boolean;
   timesCooked: number;
   sourceName?: string | null;
   instructions?: string | null;
@@ -204,6 +206,14 @@ export function Recipes() {
     if (detail?.id === r.id) setDetail({ ...detail, isFavorite: updated.isFavorite });
   }
 
+  async function toggleShare() {
+    if (!detail) return;
+    const updated = await api.post<{ isShared: boolean }>(`/recipes/${detail.id}/share`, {
+      shared: !detail.isShared,
+    });
+    setDetail({ ...detail, isShared: updated.isShared });
+  }
+
   async function applySub(fromCanonicalItemId: string, toCanonicalItemId: string) {
     await api.post('/substitutions', { fromCanonicalItemId, toCanonicalItemId });
     setSubFor(undefined);
@@ -300,6 +310,11 @@ export function Recipes() {
             {detail.isFavorite ? '♥' : '♡'}
           </button>
         </div>
+        {detail.canShare && (
+          <button className="btn-link" onClick={toggleShare}>
+            {detail.isShared ? '🌐 Shared to everyone — make private' : '🔒 Private to your org — share it'}
+          </button>
+        )}
         <div className="card-sub">
           <Stars rating={detail.externalRating} count={detail.externalRatingCount} />
           {detail.cuisine && ` · ${detail.cuisine}`}
