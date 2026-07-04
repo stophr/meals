@@ -1,8 +1,13 @@
 # Bulk recipe import — Food.com dataset
 
-> **⚠️ Superseded for now:** the Food.com dump's quantity column is unit-less, which breaks
-> amount-based pantry math. The current dev catalog uses `import-dev-catalog.ts` instead
-> (~1,100 recipes from TheMealDB + Epicurious, both with real measurements):
+> **Current catalog (2026-07-03):** the top **10,000 most-reviewed Food.com** recipes plus
+> ~821 Hey Grill Hey recipes. The earlier TheMealDB + Epicurious dev set was removed (it was
+> British-heavy and sparse). See "Actual run" at the bottom for the exact commands + results.
+>
+> <details><summary>Historical note (older dev-catalog approach)</summary>
+>
+> Before the top-10K import, the dev catalog used `import-dev-catalog.ts`
+> (~1,100 recipes from TheMealDB + Epicurious):
 >
 > ```bash
 > python -c "import kagglehub; print(kagglehub.dataset_download('hugodarwood/epirecipes'))"
@@ -14,6 +19,8 @@
 >
 > The Food.com importer below still works if you want sheer catalog size and can live with
 > presence-based (count) coverage.
+>
+> </details>
 
 Loads the Food.com Kaggle dataset into the catalog: **~522K recipes with aggregated star
 ratings, review counts, ingredient quantities, categories, keywords, and images**.
@@ -89,3 +96,36 @@ Reference run (274K recipes, 2.16M ingredient rows, qwen2.5:7b): 98.2% of rows l
 - Dataset licensing: the dump is for personal/research use; recipe *facts* (ingredient lists)
   are not copyrightable, but treat instruction text as source-attributed content
   (`sourceUrl` points back to food.com).
+
+## Actual run (2026-07-03) — top-10K swap
+
+Replaced the strange TheMealDB (466) + Epicurious (694) dev set with the most-reviewed
+Food.com recipes, keeping Hey Grill Hey. Dataset already local at
+`~/.cache/kagglehub/datasets/irkaal/foodcom-recipes-and-reviews/versions/2/recipes.csv`.
+
+```bash
+CSV=~/.cache/kagglehub/datasets/irkaal/foodcom-recipes-and-reviews/versions/2/recipes.csv
+# 1. drop the old strange catalog (cascades to their ingredients/plan-entries/rules)
+psql -c "DELETE FROM \"Recipe\" WHERE \"sourceName\" IN ('TheMealDB','Epicurious');"
+# 2. import the top 10K by review count (two-pass: find threshold, then import)
+pnpm --filter @meals/api exec tsx src/scripts/import-foodcom-top.ts --file "$CSV" --top 10000
+# 3. link ingredients: deterministic first, then the LLM tail
+pnpm --filter @meals/api exec tsx src/scripts/relink-ingredients.ts
+pnpm --filter @meals/api exec tsx src/scripts/link-tail.ts
+pnpm --filter @meals/api exec tsx src/scripts/consolidate-ingredients.ts
+pnpm --filter @meals/api exec tsx src/scripts/recompute-costs.ts
+```
+
+Results:
+
+- **10,000** Food.com recipes imported (#1 = Bourbon Chicken, 3,063 reviews; #10,000 ≥ 20
+  reviews). Catalog ≈ 10,838 recipes (10K Food.com + 821 Hey Grill Hey).
+- Linking: **91.8%** after the deterministic re-link (72,122 rows via the alias index), then
+  **100%** after the LLM tail pass (`link-tail.ts` created 328 canonical items from 1,081
+  distinct unresolved names).
+- A few leaked kitchen tools (thermometer, skewers, toothpicks, cheesecloth) were unlinked
+  from recipes / deleted afterward.
+- Costs recomputed: 10,719 recipes priced, 119 unpriceable.
+
+Note: `import-foodcom-top.ts` is the popularity-ranked variant; the plain `import-foodcom.ts`
+takes rows in file order with `--min-reviews`/`--limit` filters.
