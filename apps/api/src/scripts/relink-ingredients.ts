@@ -22,13 +22,11 @@ async function main() {
   }
 
   const items = await prisma.canonicalItem.findMany({
-    where: { householdId },
     select: { id: true, name: true, brand: true },
   });
   const byName = new Map(items.map((i) => [i.name.toLowerCase(), i.id]));
   const candidates = items.map((i) => ({ productId: i.id, text: `${i.brand ?? ''} ${i.name}`.trim() }));
   const aliasRows = await prisma.ingredientAlias.findMany({
-    where: { householdId },
     select: { rawName: true, canonicalItemId: true },
   });
   const aliasMap = new Map(aliasRows.map((a) => [a.rawName, a.canonicalItemId]));
@@ -97,8 +95,8 @@ async function main() {
     if (seen.has(a.rawName)) continue;
     seen.add(a.rawName);
     await prisma.ingredientAlias.upsert({
-      where: { householdId_rawName: { householdId, rawName: a.rawName } },
-      create: { householdId, rawName: a.rawName, canonicalItemId: a.canonicalItemId },
+      where: { rawName: a.rawName },
+      create: { rawName: a.rawName, canonicalItemId: a.canonicalItemId },
       update: {},
     });
   }

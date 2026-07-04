@@ -127,7 +127,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const household = await getHousehold(req);
     let added = 0;
     for (const it of items) {
-      const resolved = await resolveCanonicalItem(household.id, it.name);
+      const resolved = await resolveCanonicalItem(it.name);
       const base = toBaseQuantity(it.quantity, it.unit);
       await prisma.inventoryLot.create({
         data: {

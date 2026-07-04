@@ -14,17 +14,13 @@ export async function itemRoutes(app: FastifyInstance) {
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface
   // first — typing "sugar" returns "Sugar" ahead of "Brown Sugar", "Demerara Sugar", etc.
   app.get('/items', async (req) => {
-    const household = await getHousehold(req);
+    // Canonical items are a GLOBAL dictionary — the same for every org.
     const { q } = req.query as { q?: string };
     if (!q) {
-      return prisma.canonicalItem.findMany({
-        where: { householdId: household.id },
-        orderBy: { name: 'asc' },
-        take: 50,
-      });
+      return prisma.canonicalItem.findMany({ orderBy: { name: 'asc' }, take: 50 });
     }
     const matches = await prisma.canonicalItem.findMany({
-      where: { householdId: household.id, name: { contains: q, mode: 'insensitive' } },
+      where: { name: { contains: q, mode: 'insensitive' } },
       take: 200,
     });
     const ids = matches.map((m) => m.id);
@@ -56,11 +52,10 @@ export async function itemRoutes(app: FastifyInstance) {
 
   app.post('/items', async (req, reply) => {
     const data = canonicalItemCreateSchema.parse(req.body);
-    const household = await getHousehold(req);
     const base = data.baseUnit ? toBaseQuantity(1, data.baseUnit) : undefined;
     // Resolve via the alias index first so "Pinch Of Sugar" returns the existing "Sugar"
     // instead of spawning another variant.
-    const resolved = await resolveCanonicalItem(household.id, data.name, {
+    const resolved = await resolveCanonicalItem(data.name, {
       category: data.category,
       baseUnit: data.baseUnit,
       baseDimension: base?.dimension,

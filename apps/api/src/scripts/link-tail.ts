@@ -57,9 +57,9 @@ async function main() {
     { baseUrl, model },
   );
 
-  const existing = await prisma.canonicalItem.findMany({ where: { householdId }, select: { id: true, name: true } });
+  const existing = await prisma.canonicalItem.findMany({ select: { id: true, name: true } });
   const byExact = new Map(existing.map((e) => [e.name.toLowerCase(), e.id]));
-  const aliasRows = await prisma.ingredientAlias.findMany({ where: { householdId }, select: { rawName: true, canonicalItemId: true } });
+  const aliasRows = await prisma.ingredientAlias.findMany({ select: { rawName: true, canonicalItemId: true } });
   const aliasMap = new Map(aliasRows.map((a) => [a.rawName, a.canonicalItemId]));
 
   let linked = 0;
@@ -82,7 +82,7 @@ async function main() {
 
     if (!itemId) {
       const item = await prisma.canonicalItem.create({
-        data: { householdId, name: m.root, category: m.category, normKey: buildNormKey(m.root) },
+        data: { name: m.root, category: m.category, normKey: buildNormKey(m.root) },
       });
       itemId = item.id;
       byExact.set(m.root.toLowerCase(), itemId);
@@ -94,8 +94,8 @@ async function main() {
       if (aliasMap.has(rn)) continue;
       aliasMap.set(rn, itemId);
       await prisma.ingredientAlias.upsert({
-        where: { householdId_rawName: { householdId, rawName: rn } },
-        create: { householdId, rawName: rn, canonicalItemId: itemId },
+        where: { rawName: rn },
+        create: { rawName: rn, canonicalItemId: itemId },
         update: {},
       });
     }

@@ -212,7 +212,7 @@ async function main() {
 
   // ---- Load existing canonical items into the index ----
   const index = new ItemIndex();
-  for (const item of await prisma.canonicalItem.findMany({ where: { householdId: household.id } })) {
+  for (const item of await prisma.canonicalItem.findMany()) {
     index.add({ id: item.id, name: item.name, key: item.normKey || buildNormKey(item.name, item.brand) });
   }
 

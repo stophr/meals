@@ -27,7 +27,7 @@ async function main() {
   const limit = Number(arg('--limit') ?? Infinity);
   const refetch = process.argv.includes('--refetch');
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
-  const ctx = await loadLinkContext(household.id);
+  const ctx = await loadLinkContext();
 
   // Recipes whose raw isn't cached yet (unless --refetch).
   const cached = refetch

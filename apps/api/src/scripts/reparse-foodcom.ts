@@ -16,7 +16,7 @@ const arg = (f: string) => {
 async function main() {
   const limit = Number(arg('--limit') ?? Infinity);
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
-  const ctx = await loadLinkContext(household.id);
+  const ctx = await loadLinkContext();
 
   const raws = await prisma.recipeRawFetch.findMany({
     take: limit === Infinity ? undefined : limit,

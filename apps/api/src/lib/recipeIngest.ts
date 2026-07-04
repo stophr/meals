@@ -18,10 +18,10 @@ export interface LinkContext {
   aliasMap: Map<string, string>;
 }
 
-export async function loadLinkContext(householdId: string): Promise<LinkContext> {
+export async function loadLinkContext(): Promise<LinkContext> {
   const [items, aliasRows] = await Promise.all([
-    prisma.canonicalItem.findMany({ where: { householdId }, select: { id: true, name: true, brand: true } }),
-    prisma.ingredientAlias.findMany({ where: { householdId }, select: { rawName: true, canonicalItemId: true } }),
+    prisma.canonicalItem.findMany({ select: { id: true, name: true, brand: true } }),
+    prisma.ingredientAlias.findMany({ select: { rawName: true, canonicalItemId: true } }),
   ]);
   return {
     candidates: items.map((i) => ({ productId: i.id, text: `${i.brand ?? ''} ${i.name}`.trim() })),
@@ -126,7 +126,7 @@ export async function ingestRecipe(
     },
   });
 
-  const ctx = await loadLinkContext(householdId);
+  const ctx = await loadLinkContext();
 
   if (existing) {
     const { enriched } = await enrichRecipe(existing, normalized, ctx);

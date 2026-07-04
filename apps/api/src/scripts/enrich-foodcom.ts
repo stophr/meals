@@ -30,7 +30,7 @@ async function main() {
   const force = process.argv.includes('--force'); // re-process already-tagged recipes
   // The active tenant is the oldest household (same as the API's getHousehold()).
   const household = await prisma.household.findFirstOrThrow({ orderBy: { createdAt: 'asc' } });
-  const ctx = await loadLinkContext(household.id);
+  const ctx = await loadLinkContext();
 
   const recipes = await prisma.recipe.findMany({
     where: {

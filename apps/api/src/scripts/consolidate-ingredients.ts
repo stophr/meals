@@ -19,7 +19,7 @@ const normAlias = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 async function main() {
   const items = await prisma.canonicalItem.findMany({
-    select: { id: true, name: true, householdId: true, createdAt: true, category: true },
+    select: { id: true, name: true, createdAt: true, category: true },
   });
   const useRows = await prisma.recipeIngredient.groupBy({
     by: ['canonicalItemId'],
@@ -85,8 +85,8 @@ async function main() {
       for (const member of group) {
         const rawName = normAlias(member.name);
         await tx.ingredientAlias.upsert({
-          where: { householdId_rawName: { householdId: survivor.householdId, rawName } },
-          create: { householdId: survivor.householdId, rawName, canonicalItemId: survivor.id },
+          where: { rawName },
+          create: { rawName, canonicalItemId: survivor.id },
           update: { canonicalItemId: survivor.id },
         });
         aliases++;

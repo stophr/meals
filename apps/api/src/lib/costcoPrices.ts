@@ -30,7 +30,7 @@ export async function recordProviderPrices(
   const provider = await prisma.provider.findFirst({ where: { id: providerId, householdId } });
   if (!provider) throw new Error('Provider not found');
 
-  const items = await prisma.canonicalItem.findMany({ where: { householdId } });
+  const items = await prisma.canonicalItem.findMany(); // global dictionary
   const candidates = items.map((i) => ({ productId: i.id, text: i.name }));
   const result: RecordResult = { recorded: 0, linked: 0, skipped: 0 };
 

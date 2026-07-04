@@ -101,7 +101,6 @@ model Household {
 
   users          User[]
   providers      Provider[]
-  canonicalItems CanonicalItem[]
   recipes        Recipe[]
   mealRules      MealRule[]
   inventory      InventoryLot[]
@@ -110,7 +109,6 @@ model Household {
   jobs           IngestionJob[]
   integrationTokens IntegrationToken[]
   krogerCoupons  KrogerCoupon[]
-  ingredientAliases IngredientAlias[]
   substitutions  IngredientSubstitution[]
   magicLinks     MagicLink[]
 }
@@ -187,10 +185,12 @@ model IngredientSubstitution {
 // Catalog: canonical items <-> per-provider products
 // ---------------------------------------------------------------------------
 
+// GLOBAL, store-agnostic ingredient dictionary shared by every org. Recipes (also shared) link
+// to these; each org's inventory, provider products, prices, aliases keep their own householdId
+// but reference the same global items — so a shared recipe resolves to items any org can stock
+// and price at its own store.
 model CanonicalItem {
-  id          String     @id @default(cuid())
-  householdId String
-  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
 
   name     String
   brand    String?
@@ -231,25 +231,23 @@ model CanonicalItem {
   substitutionsFrom IngredientSubstitution[] @relation("SubFrom")
   substitutionsTo   IngredientSubstitution[] @relation("SubTo")
 
-  @@index([householdId, normKey])
-  @@index([householdId, name])
+  @@index([normKey])
+  @@index([name])
 }
 
 // Maps a messy ingredient name ("packed dark brown sugar", "pinch of sugar") to the buyable
 // canonical item, so refining/consolidating the corpus never breaks recipes and future
 // imports resolve to the right root instead of spawning yet another variant.
+// GLOBAL name->item vocabulary (shared with the global canonical dictionary).
 model IngredientAlias {
-  id          String    @id @default(cuid())
-  householdId String
-  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
 
-  rawName         String // normalized (lowercased) alias
+  rawName         String        @unique // normalized (lowercased) alias
   canonicalItemId String
   canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
-  @@unique([householdId, rawName])
   @@index([canonicalItemId])
 }
 

@@ -161,7 +161,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const data = shoppingListItemAddSchema.parse(req.body);
     const household = await getHousehold(req);
-    const resolved = await resolveCanonicalItem(household.id, data.name);
+    const resolved = await resolveCanonicalItem(data.name);
     const base = toBaseQuantity(data.quantity, data.unit);
     reply.code(201);
     return prisma.shoppingListItem.create({

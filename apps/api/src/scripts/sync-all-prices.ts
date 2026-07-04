@@ -37,10 +37,7 @@ async function main() {
     select: { canonicalItemId: true },
   });
   const freshIds = new Set(fresh.map((f) => f.canonicalItemId!));
-  const all = await prisma.canonicalItem.findMany({
-    where: { householdId: household.id },
-    select: { id: true },
-  });
+  const all = await prisma.canonicalItem.findMany({ select: { id: true } });
   const todo = all.filter((i) => !freshIds.has(i.id)).slice(0, limit === Infinity ? undefined : limit);
   console.log(`${all.length} items total; ${freshIds.size} fresh; syncing ${todo.length} at ${provider.name}`);
 
