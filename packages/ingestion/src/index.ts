@@ -11,3 +11,4 @@ export * from './ordering/kroger.js';
 export * from './ordering/cartLinks.js';
 export * from './nutrition/usda.js';
 export * from './products/upcitemdb.js';
+export * from './products/plu.js';

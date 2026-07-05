@@ -10,21 +10,21 @@ import { buildNormKey, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
-import { resolveProduct } from '../lib/productCorpus.js';
+import { resolveProduct, resolvePluProduct } from '../lib/productCorpus.js';
+import { looksLikePlu } from '@meals/ingestion';
 
 export async function itemRoutes(app: FastifyInstance) {
-  // Resolve a phone-scanned barcode against the local UPC corpus, enriching from the most
-  // accurate source first (Fry's for description, USDA/OFF for nutrition) on the first scan.
-  // Returns the Product (brand/size/nutrition) + its ingredient so the pantry can prefill.
+  // Resolve a scanned/typed code against the local corpus. An 8-14 digit UPC/EAN enriches from
+  // the most accurate source first (Fry's desc, USDA/OFF nutrition); a 4-5 digit produce PLU
+  // maps to a generic commodity (IFPS) + USDA nutrition. Returns the item so the pantry prefills.
   app.get('/items/barcode/:code', async (req, reply) => {
     const household = await getHousehold(req); // members only; store selection is per-org
     const { code } = req.params as { code: string };
     const upc = normalizeUpc(code);
-    if (!upc) {
-      reply.code(400);
-      return { found: false, message: 'That doesn’t look like a product barcode.' };
-    }
-    return resolveProduct(upc, household.id);
+    if (upc) return resolveProduct(upc, household.id);
+    if (looksLikePlu(code)) return resolvePluProduct(code, household.id);
+    reply.code(400);
+    return { found: false, message: 'That doesn’t look like a product barcode or produce PLU.' };
   });
 
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface

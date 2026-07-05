@@ -13,6 +13,7 @@ import {
   lookupUsdaByUpc,
   lookupUsdaByName,
   lookupUpcItemDb,
+  resolvePlu,
   type KrogerProduct,
   type UpcItemDbProduct,
 } from '@meals/ingestion';
@@ -96,6 +97,7 @@ function nutritionFields(n: Nutr) {
   return {
     servingText: n.servingText ?? (n.servingSize != null && n.servingUnit ? `${n.servingSize} ${n.servingUnit}` : null),
     servingBaseQuantity: servingBase,
+    servingDimension: unit ? (dimensionOf(unit as never) as never) : null,
     calories: dec(n.calories),
     proteinG: dec(n.proteinG),
     carbsG: dec(n.carbsG),
@@ -267,5 +269,43 @@ export async function resolveProduct(upc: string, householdId: string): Promise<
       });
 
   await backfillItem(resolvedItem.id, product);
+  return shape(product);
+}
+
+/**
+ * Resolve a produce PLU (loose fruit/veg by the 4-5 digit sticker code) to a corpus item.
+ * PLUs have no manufactured container — the "product" is a pseudo-entry keyed `plu:<code>` with
+ * a generic commodity name (IFPS) and USDA-by-name nutrition (produce is generic). Sets it as
+ * the ingredient's reference product so recipes using that produce get nutrition.
+ */
+export async function resolvePluProduct(rawCode: string, _householdId: string): Promise<ResolvedProduct> {
+  const plu = resolvePlu(rawCode);
+  if (!plu) return { found: false, code: (rawCode ?? '').replace(/\D/g, '') };
+
+  const key = `plu:${plu.code}`;
+  const existing = await prisma.product.findUnique({ where: { upc: key } });
+  if (existing && existing.nutritionSource) return shape(existing);
+
+  const item = await resolveCanonicalItem(plu.name);
+  const usda = await lookupUsdaByName(
+    { apiKey: env.USDA_FDC_API_KEY, baseUrl: env.USDA_FDC_API_BASE },
+    plu.commodity,
+  ).catch(() => null);
+
+  const write: Record<string, unknown> = {
+    description: plu.name,
+    descriptionSource: 'IFPS',
+    descriptionUpdatedAt: new Date(),
+    canonicalItemId: item.id,
+  };
+  if (usda && hasMacros(usda)) {
+    Object.assign(write, nutritionFields(usda), { nutritionSource: 'USDA', nutritionUpdatedAt: new Date() });
+  }
+
+  const product = existing
+    ? await prisma.product.update({ where: { id: existing.id }, data: write })
+    : await prisma.product.create({ data: { upc: key, ...write } as never });
+
+  await backfillItem(item.id, product);
   return shape(product);
 }

@@ -77,7 +77,7 @@ export async function recipeNutrition(recipeId: string, householdId: string): Pr
       : ing.canonicalItem?.baseUnit
         ? dimensionOf(ing.canonicalItem.baseUnit)
         : 'MASS';
-    const servDim: UnitDimension = p.packUnit ? dimensionOf(p.packUnit) : ingDim;
+    const servDim: UnitDimension = p.servingDimension ?? (p.packUnit ? dimensionOf(p.packUnit) : ingDim);
     const f = {
       gramsPerMl: ing.canonicalItem?.gramsPerMl != null ? Number(ing.canonicalItem.gramsPerMl) : null,
       gramsPerEach: ing.canonicalItem?.gramsPerEach != null ? Number(ing.canonicalItem.gramsPerEach) : null,

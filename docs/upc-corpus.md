@@ -41,6 +41,23 @@ outranks everything (user edits are never clobbered).
 
 Scanning stores the resolved `productId` on the pantry lot and prefills brand + size (+ expiry input).
 
+## Produce PLU codes (loose fruit/veg)
+
+PLUs are the 4-5 digit stickers on **loose produce** (a separate namespace from UPC/EAN) — `4011`
+= bananas, a leading `9` = organic (`94011`). They're usually **typed**, not scanned (most
+stickers have no barcode), so the barcode route accepts them: `normalizeUpc` (8-14 digits) →
+UPC path; else `looksLikePlu` (4-5 digits) → `resolvePluProduct`.
+
+- The full **IFPS** list (1520 codes) is bundled at `packages/ingestion/src/products/pluCodes.ts`
+  (source: github.com/ankane/plu). `resolvePlu` strips the organic `9`, maps to the commodity.
+- Loose produce has **no manufactured container**, so the corpus entry is a pseudo-product keyed
+  `plu:<code>` with `descriptionSource = IFPS` and **USDA-by-name** nutrition — produce is generic,
+  so USDA is exactly right. The by-name picker prefers the *raw/whole* form and avoids processed
+  entries (so "Bananas" → raw 89 kcal, not dehydrated 346).
+- It's set as the ingredient's `referenceProduct`, so recipes using that produce get nutrition.
+- `Product.servingDimension` records whether a serving is mass/volume/count, so recipe math
+  converts correctly (e.g. a USDA 100 g serving vs a recipe's "2 bananas" via the item's density).
+
 ## Recipe nutrition — "per specific container/brand"
 
 Recipe nutrition uses the **exact product the household has stocked** for each ingredient (FIFO lot),

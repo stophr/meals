@@ -110,17 +110,33 @@ export async function lookupUsdaByUpc(cfg: UsdaConfig, upc: string): Promise<Usd
   };
 }
 
+// Bias the by-name pick toward the raw/whole form (what a recipe ingredient or loose produce
+// means) and away from processed entries, which otherwise win alphabetically ("Bananas,
+// dehydrated" at 346 kcal instead of "Bananas, raw" at 89).
+const PROCESSED = [
+  'dehydrated', 'dried', 'powder', 'juice', 'canned', 'cooked', 'boiled', 'fried', 'roasted',
+  'chips', 'sauce', 'pie', 'baby food', 'fritter', 'flake', 'candied', 'sweetened', 'frozen',
+];
+function nameScore(desc: string): number {
+  const d = desc.toLowerCase();
+  let s = /\braw\b/.test(d) ? 3 : 0;
+  for (const bad of PROCESSED) if (d.includes(bad)) s -= 3;
+  return s - d.length * 0.005; // prefer simpler/shorter descriptions
+}
+
 /** Generic ingredient by name (per-100g). Serving basis is 100 g. */
 export async function lookupUsdaByName(cfg: UsdaConfig, name: string): Promise<UsdaNutrition | null> {
   let foods: FdcFood[];
   try {
-    foods = await search(cfg, { query: name, dataType: 'Foundation,SR Legacy', pageSize: '3' });
+    foods = await search(cfg, { query: name, dataType: 'Foundation,SR Legacy', pageSize: '15' });
   } catch {
     return null;
   }
-  const food = foods[0];
-  if (!food) return null;
-  const macros = fromFoodNutrients(food);
-  if (!Object.values(macros).some((x) => x != null)) return null;
-  return { description: food.description, servingSize: 100, servingUnit: 'g', servingText: '100 g', ...macros };
+  const ranked = foods
+    .map((f) => ({ f, macros: fromFoodNutrients(f) }))
+    .filter((x) => Object.values(x.macros).some((v) => v != null))
+    .sort((a, b) => nameScore(b.f.description ?? '') - nameScore(a.f.description ?? ''));
+  const best = ranked[0];
+  if (!best) return null;
+  return { description: best.f.description, servingSize: 100, servingUnit: 'g', servingText: '100 g', ...best.macros };
 }

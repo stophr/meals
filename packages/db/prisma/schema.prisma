@@ -68,6 +68,7 @@ enum ProductSource {
   USDA // USDA FoodData Central — authoritative for nutrition
   OFF // Open Food Facts
   UPCITEMDB // UPCitemdb — last-resort description + images
+  IFPS // produce PLU code -> commodity name
   MANUAL // user-entered / legacy
 }
 
@@ -403,6 +404,7 @@ model Product {
   // Nutrition group, per serving (USDA > OFF). Nulls = unknown.
   servingText         String? // e.g. "2 tbsp (30 ml)"
   servingBaseQuantity Decimal? @db.Decimal(14, 4) // one serving in base units
+  servingDimension    UnitDimension? // dimension of servingBaseQuantity (MASS/VOLUME/COUNT)
   servingsPerContainer Decimal? @db.Decimal(10, 2)
   calories  Decimal? @db.Decimal(10, 2)
   proteinG  Decimal? @db.Decimal(10, 2)

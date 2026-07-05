@@ -164,7 +164,7 @@ export function BarcodeScanner({
       <form className="scanner-manual" onSubmit={submitManual}>
         <input
           inputMode="numeric"
-          placeholder="or type the barcode digits"
+          placeholder="or type a barcode / produce PLU (e.g. 4011)"
           value={manual}
           onChange={(ev) => setManual(ev.target.value)}
         />
