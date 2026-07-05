@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 
-// Load the zxing reader + the set of DataBar (RSS) formats (which we double-confirm).
 async function loadReader() {
   const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
     import('@zxing/browser'),
@@ -16,13 +15,14 @@ async function loadReader() {
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
-        BarcodeFormat.RSS_14, // GS1 DataBar — the barcode on many produce stickers
+        // GS1 DataBar family — the barcode on produce stickers is usually DataBar (Expanded)
+        // Stacked, which needs RSS_EXPANDED. zxing checksum-validates these.
+        BarcodeFormat.RSS_14,
+        BarcodeFormat.RSS_EXPANDED,
       ],
     ],
   ]);
-  const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
-  const rss = new Set<number>([BarcodeFormat.RSS_14, BarcodeFormat.RSS_EXPANDED]);
-  return { reader, rss };
+  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
 }
 
 type Status = 'starting' | 'scanning' | 'error';
@@ -49,7 +49,6 @@ export function BarcodeScanner({
   const cbRef = useRef(onDetected);
   cbRef.current = onDetected;
   const doneRef = useRef(false);
-  const stableRef = useRef({ code: '', n: 0 }); // DataBar: require the same read twice
   const [status, setStatus] = useState<Status>('starting');
   const [error, setError] = useState<string>();
   const [tapMsg, setTapMsg] = useState<string>();
@@ -67,28 +66,9 @@ export function BarcodeScanner({
     cbRef.current(code);
   }
 
-  // Decode one canvas result, honoring the DataBar double-confirm. Returns true when accepted.
-  function accept(result: { getText(): string; getBarcodeFormat(): number }): boolean {
-    const t = result.getText();
-    const rss = readerRef.current?.rss;
-    if (!rss || !rss.has(result.getBarcodeFormat())) {
-      finish(t); // UPC/EAN/128 are check-digit-validated → accept on first read
-      return true;
-    }
-    if (t === stableRef.current.code) {
-      if (++stableRef.current.n >= 2) {
-        finish(t);
-        return true;
-      }
-    } else {
-      stableRef.current = { code: t, n: 1 };
-    }
-    return false;
-  }
-
   function decodeFrame(): boolean {
     const video = videoRef.current;
-    const reader = readerRef.current?.reader;
+    const reader = readerRef.current;
     if (!video || !reader || !video.videoWidth || !video.videoHeight) return false;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
@@ -97,7 +77,8 @@ export function BarcodeScanner({
     if (!ctx) return false;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     try {
-      return accept(reader.decodeFromCanvas(canvas));
+      finish(reader.decodeFromCanvas(canvas).getText()); // zxing checksum-validates the decode
+      return true;
     } catch {
       return false; // no barcode in this frame
     }
