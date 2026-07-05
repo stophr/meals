@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 
-// Retail 1-D formats we care about (plus CODE_128 for the odd store label).
+// Load the zxing reader + the set of DataBar (RSS) formats (which we double-confirm).
 async function loadReader() {
   const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
     import('@zxing/browser'),
@@ -17,14 +17,10 @@ async function loadReader() {
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
         BarcodeFormat.RSS_14, // GS1 DataBar — the barcode on many produce stickers
-        // RSS_EXPANDED deliberately omitted: it misreads far more often and produced confident
-        // wrong matches on produce. RSS_14 covers the common produce DataBar.
       ],
     ],
   ]);
-  const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
-  // DataBar (RSS) is misread-prone, so we confirm it twice; UPC/EAN/128 are check-digit-validated
-  // and accepted on the first read (instant).
+  const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
   const rss = new Set<number>([BarcodeFormat.RSS_14, BarcodeFormat.RSS_EXPANDED]);
   return { reader, rss };
 }
@@ -32,11 +28,12 @@ async function loadReader() {
 type Status = 'starting' | 'scanning' | 'error';
 
 /**
- * Live barcode scanner. The camera preview decodes CONTINUOUSLY on its own — everything runs
- * locally in the browser (zxing on the video frames); nothing is uploaded, only the decoded
- * digits go to the server for lookup. Tapping the preview forces a one-shot decode of the
- * current frame (same local pipeline — never the native camera app), as a manual backup when
- * continuous decode is being stubborn. Typing the digits is the last resort.
+ * Live barcode scanner. We drive the decode loop ourselves — get the camera stream, then on a
+ * timer draw the current video frame to a canvas and decode it with zxing. This is far more
+ * reliable on iOS Safari than zxing's built-in continuous decoder, whose internal frame capture
+ * often never fires (preview plays, but nothing decodes). Everything runs locally; only the
+ * decoded digits are sent for lookup. Tap the preview to force an immediate decode; typing the
+ * digits is the last resort.
  */
 export function BarcodeScanner({
   onDetected,
@@ -47,21 +44,63 @@ export function BarcodeScanner({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<Awaited<ReturnType<typeof loadReader>>>();
+  const streamRef = useRef<MediaStream>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
   const cbRef = useRef(onDetected);
   cbRef.current = onDetected;
   const doneRef = useRef(false);
-  const controlsRef = useRef<{ stop: () => void }>();
-  const stableRef = useRef({ code: '', n: 0 }); // require the same read twice (anti-misread)
+  const stableRef = useRef({ code: '', n: 0 }); // DataBar: require the same read twice
   const [status, setStatus] = useState<Status>('starting');
   const [error, setError] = useState<string>();
   const [tapMsg, setTapMsg] = useState<string>();
   const [manual, setManual] = useState('');
 
+  function stopCamera() {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+  }
+
   function finish(code: string) {
     if (doneRef.current) return;
     doneRef.current = true;
-    controlsRef.current?.stop();
+    stopCamera();
     cbRef.current(code);
+  }
+
+  // Decode one canvas result, honoring the DataBar double-confirm. Returns true when accepted.
+  function accept(result: { getText(): string; getBarcodeFormat(): number }): boolean {
+    const t = result.getText();
+    const rss = readerRef.current?.rss;
+    if (!rss || !rss.has(result.getBarcodeFormat())) {
+      finish(t); // UPC/EAN/128 are check-digit-validated → accept on first read
+      return true;
+    }
+    if (t === stableRef.current.code) {
+      if (++stableRef.current.n >= 2) {
+        finish(t);
+        return true;
+      }
+    } else {
+      stableRef.current = { code: t, n: 1 };
+    }
+    return false;
+  }
+
+  function decodeFrame(): boolean {
+    const video = videoRef.current;
+    const reader = readerRef.current?.reader;
+    if (!video || !reader || !video.videoWidth || !video.videoHeight) return false;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    try {
+      return accept(reader.decodeFromCanvas(canvas));
+    } catch {
+      return false; // no barcode in this frame
+    }
   }
 
   useEffect(() => {
@@ -73,40 +112,28 @@ export function BarcodeScanner({
         return;
       }
       try {
-        const loaded = await loadReader();
-        readerRef.current = loaded;
-        const { reader, rss } = loaded;
+        readerRef.current = await loadReader();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+        });
+        streamRef.current = stream;
         const video = videoRef.current;
-        if (cancelled || !video) return;
-        // iOS autoplay: the muted *property* (not just the attribute) must be set, or the video
-        // won't play and there are no frames to decode.
-        video.muted = true;
-        video.setAttribute('playsinline', 'true');
-        const controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: 'environment' } } },
-          video,
-          (result) => {
-            if (!result) return;
-            const t = result.getText();
-            // UPC/EAN/128 are check-digit-validated -> accept on first read (instant). Only the
-            // misread-prone DataBar (RSS) must repeat the SAME value twice before we trust it.
-            if (!rss.has(result.getBarcodeFormat())) {
-              finish(t);
-              return;
-            }
-            if (t === stableRef.current.code) {
-              if (++stableRef.current.n >= 2) finish(t);
-            } else {
-              stableRef.current = { code: t, n: 1 };
-            }
-          },
-        );
-        if (cancelled) {
-          controls.stop();
+        if (cancelled || !video) {
+          stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        controlsRef.current = controls;
+        video.srcObject = stream;
+        video.muted = true;
+        video.setAttribute('playsinline', 'true');
+        await video.play().catch(() => {});
         setStatus('scanning');
+
+        const tick = () => {
+          if (cancelled || doneRef.current) return;
+          decodeFrame();
+          if (!doneRef.current) timerRef.current = setTimeout(tick, 250);
+        };
+        tick();
       } catch (e) {
         if (cancelled) return;
         setStatus('error');
@@ -121,31 +148,17 @@ export function BarcodeScanner({
     })();
     return () => {
       cancelled = true;
-      controlsRef.current?.stop();
+      stopCamera();
     };
   }, []);
 
-  // Manual backup: decode the current video frame locally (no native camera app).
-  function scanCurrentFrame() {
-    const video = videoRef.current;
-    const reader = readerRef.current?.reader;
-    if (!video || !reader || doneRef.current) return;
-    if (!video.videoWidth || !video.videoHeight) {
+  function onTap() {
+    if (doneRef.current) return;
+    if (!videoRef.current?.videoWidth) {
       setTapMsg('Camera still starting — give it a second, then tap again.');
       return;
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    try {
-      const result = reader.decodeFromCanvas(canvas);
-      finish(result.getText());
-    } catch {
-      setTapMsg('No barcode read — fill the box with the barcode and tap again.');
-    }
+    if (!decodeFrame()) setTapMsg('No barcode read — fill the box with the barcode and tap again.');
   }
 
   function submitManual(e: FormEvent) {
@@ -166,12 +179,7 @@ export function BarcodeScanner({
       {status === 'error' ? (
         <div className="scanner-error">{error}</div>
       ) : (
-        <button
-          type="button"
-          className="scanner-frame"
-          onClick={scanCurrentFrame}
-          aria-label="tap to scan the barcode"
-        >
+        <button type="button" className="scanner-frame" onClick={onTap} aria-label="tap to scan the barcode">
           <video ref={videoRef} className="scanner-video" muted playsInline autoPlay />
           <div className="scanner-reticle" />
           <p className="scanner-hint">
