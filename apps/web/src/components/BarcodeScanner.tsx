@@ -16,6 +16,8 @@ async function loadReader() {
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
+        BarcodeFormat.RSS_14, // GS1 DataBar — the barcode on many produce stickers (PLU)
+        BarcodeFormat.RSS_EXPANDED,
       ],
     ],
   ]);

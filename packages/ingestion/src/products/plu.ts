@@ -32,3 +32,26 @@ export function resolvePlu(raw: string): PluResult | null {
   if (!commodity) return null;
   return { code: d, base, commodity, name: organic ? `Organic ${commodity}` : commodity, organic };
 }
+
+/**
+ * Extract a PLU from any decoded value: a raw 4-5 digit code, OR a GS1 DataBar / GTIN that
+ * embeds the PLU as a mostly-zero-padded number (e.g. banana DataBar decodes to the GTIN-14
+ * `00000000040115` = 4011 + check digit; RSS-Expanded may prefix the `(01)` AI). Only returns a
+ * hit when the reduced number is a real PLU, so it never hijacks a genuine product UPC.
+ */
+export function extractPlu(raw: string): PluResult | null {
+  let d = (raw ?? '').replace(/\D/g, '');
+  if (!d) return null;
+
+  const direct = resolvePlu(d);
+  if (direct) return direct;
+
+  if (d.length === 16 && d.startsWith('01')) d = d.slice(2); // strip GS1 (01) AI -> GTIN-14
+  if (d.length >= 8) {
+    for (const c of [d.slice(0, -1).replace(/^0+/, ''), d.replace(/^0+/, '')]) {
+      const r = resolvePlu(c); // drop the GTIN check digit and/or leading zeros
+      if (r) return r;
+    }
+  }
+  return null;
+}

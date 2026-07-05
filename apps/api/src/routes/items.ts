@@ -11,18 +11,20 @@ import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
 import { resolveProduct, resolvePluProduct } from '../lib/productCorpus.js';
-import { looksLikePlu } from '@meals/ingestion';
+import { extractPlu } from '@meals/ingestion';
 
 export async function itemRoutes(app: FastifyInstance) {
-  // Resolve a scanned/typed code against the local corpus. An 8-14 digit UPC/EAN enriches from
-  // the most accurate source first (Fry's desc, USDA/OFF nutrition); a 4-5 digit produce PLU
-  // maps to a generic commodity (IFPS) + USDA nutrition. Returns the item so the pantry prefills.
+  // Resolve a scanned/typed code against the local corpus. A produce PLU (typed 4-5 digits, or a
+  // GS1 DataBar that embeds one) maps to a generic commodity (IFPS) + USDA nutrition; an 8-14
+  // digit UPC/EAN enriches from the most accurate source first (Fry's desc, USDA/OFF nutrition).
+  // PLU is checked first because a produce DataBar also passes the UPC length test.
   app.get('/items/barcode/:code', async (req, reply) => {
     const household = await getHousehold(req); // members only; store selection is per-org
     const { code } = req.params as { code: string };
+    const plu = extractPlu(code);
+    if (plu) return resolvePluProduct(plu.code, household.id);
     const upc = normalizeUpc(code);
     if (upc) return resolveProduct(upc, household.id);
-    if (looksLikePlu(code)) return resolvePluProduct(code, household.id);
     reply.code(400);
     return { found: false, message: 'That doesn’t look like a product barcode or produce PLU.' };
   });

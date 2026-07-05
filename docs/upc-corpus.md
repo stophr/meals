@@ -44,9 +44,13 @@ Scanning stores the resolved `productId` on the pantry lot and prefills brand + 
 ## Produce PLU codes (loose fruit/veg)
 
 PLUs are the 4-5 digit stickers on **loose produce** (a separate namespace from UPC/EAN) — `4011`
-= bananas, a leading `9` = organic (`94011`). They're usually **typed**, not scanned (most
-stickers have no barcode), so the barcode route accepts them: `normalizeUpc` (8-14 digits) →
-UPC path; else `looksLikePlu` (4-5 digits) → `resolvePluProduct`.
+= bananas, a leading `9` = organic (`94011`). They can be **typed** (4-5 digits) or **scanned**:
+produce stickers that carry a barcode use **GS1 DataBar** (RSS-14 / RSS-Expanded), enabled in the
+scanner alongside UPC/EAN. A DataBar decodes to a zero-padded GTIN embedding the PLU
+(`00000000040115` = 4011 + check digit; RSS-Expanded may prefix the `(01)` AI), so `extractPlu`
+reduces any decoded value to its PLU and the route checks that **before** the UPC path (a produce
+DataBar also passes the 14-digit UPC test). It only matches when the reduction is a real PLU, so
+genuine product UPCs are never hijacked.
 
 - The full **IFPS** list (1520 codes) is bundled at `packages/ingestion/src/products/pluCodes.ts`
   (source: github.com/ankane/plu). `resolvePlu` strips the organic `9`, maps to the commodity.
