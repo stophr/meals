@@ -48,6 +48,45 @@ const ingredientInclude = {
   },
 } satisfies Prisma.RecipeInclude;
 
+// Everything needed to decorate a recipe row with the org's pantry coverage, substitutions,
+// per-org favorite flag, and cook-tonight cost. Loaded once, reused across a batch of recipes.
+interface DecorCtx {
+  favIds: Set<string>;
+  subs: Awaited<ReturnType<typeof subMap>>;
+  pantry: Awaited<ReturnType<typeof pantryLots>>;
+  prices: Awaited<ReturnType<typeof loadItemPrices>>;
+}
+
+async function loadDecorCtx(householdId: string, recipeId?: string): Promise<DecorCtx> {
+  const [pantry, prices, subs, favRows] = await Promise.all([
+    pantryLots(householdId),
+    loadItemPrices(householdId),
+    subMap(householdId, recipeId), // org-global (+ this-recipe) substitutions
+    prisma.recipeFavorite.findMany({ where: { householdId }, select: { recipeId: true } }),
+  ]);
+  return { favIds: new Set(favRows.map((f) => f.recipeId)), subs, pantry, prices };
+}
+
+function decorateRecipe<T extends { id: string; ingredients: CostIngredient[]; servings: number }>(
+  r: T,
+  ctx: DecorCtx,
+) {
+  const ingredients = applySubs(r.ingredients as never[], ctx.subs) as typeof r.ingredients;
+  const coverage = recipeCoverage(ingredients as never, ctx.pantry);
+  return {
+    ...r,
+    isFavorite: ctx.favIds.has(r.id), // per-org
+    ingredients,
+    coverage,
+    cookTonightCost: cookTonightCost(
+      ingredients,
+      r.servings || 1,
+      new Set(coverage.satisfiedItemIds ?? []),
+      ctx.prices,
+    ),
+  };
+}
+
 export async function recipeRoutes(app: FastifyInstance) {
   // ---- Catalog search: q + facets + sort + pantry coverage ----
   app.get('/recipes', async (req) => {
@@ -106,29 +145,9 @@ export async function recipeRoutes(app: FastifyInstance) {
               ? [{ complexity: 'asc' }, { name: 'asc' }]
               : [{ name: 'asc' }];
 
-    const [pantry, prices, subs, favRows] = await Promise.all([
-      pantryLots(household.id),
-      loadItemPrices(household.id),
-      subMap(household.id), // org-global substitutions
-      prisma.recipeFavorite.findMany({ where: { householdId: household.id }, select: { recipeId: true } }),
-    ]);
-    const favIds = new Set(favRows.map((f) => f.recipeId));
-    const withCost = <T extends { id: string; ingredients: CostIngredient[]; servings: number }>(r: T) => {
-      const ingredients = applySubs(r.ingredients as never[], subs) as typeof r.ingredients;
-      const coverage = recipeCoverage(ingredients as never, pantry);
-      return {
-        ...r,
-        isFavorite: favIds.has(r.id), // per-org
-        ingredients,
-        coverage,
-        cookTonightCost: cookTonightCost(
-          ingredients,
-          r.servings || 1,
-          new Set(coverage.satisfiedItemIds ?? []),
-          prices,
-        ),
-      };
-    };
+    const ctx = await loadDecorCtx(household.id);
+    const withCost = <T extends { id: string; ingredients: CostIngredient[]; servings: number }>(r: T) =>
+      decorateRecipe(r, ctx);
 
     if (query.cookable) {
       // A recipe can only be fully cookable when every required ingredient is pantry-linked,
@@ -196,6 +215,126 @@ export async function recipeRoutes(app: FastifyInstance) {
       categories: categoryRows.map((r) => r.category).sort(),
       tags: tagRows.map((r) => r.tag),
     };
+  });
+
+  // ---- "Suggested for you": household-taste recommendations ----
+  // Content-based recommender. Learns a taste profile from this org's explicit favorites
+  // (strong signal) and previously planned recipes (mild signal) — which cuisines, categories
+  // and tags they gravitate to — then scores the visible corpus by affinity + pantry-cookable
+  // + rating, excluding what they've already favorited. Cold start (no signal yet) falls back
+  // to well-regarded shared recipes. No schema/state of its own; recomputed per request.
+  app.get('/recipes/suggested', async (req) => {
+    const household = await getHousehold(req);
+    const take = Math.min(Math.max(Number((req.query as { take?: string })?.take) || 12, 1), 40);
+    const visible: Prisma.RecipeWhereInput = {
+      OR: [{ isShared: true }, { householdId: household.id }],
+    };
+
+    // Taste signals: favorites weigh 3, previously-planned recipes weigh 1 (per occurrence).
+    const [favRows, plannedRows] = await Promise.all([
+      prisma.recipeFavorite.findMany({ where: { householdId: household.id }, select: { recipeId: true } }),
+      prisma.mealPlanEntry.findMany({
+        where: { mealPlan: { householdId: household.id } },
+        select: { recipeId: true },
+        take: 500,
+      }),
+    ]);
+    const favIds = new Set(favRows.map((f) => f.recipeId));
+    const weight = new Map<string, number>(); // recipeId -> taste weight
+    for (const f of favRows) weight.set(f.recipeId, (weight.get(f.recipeId) ?? 0) + 3);
+    for (const p of plannedRows) weight.set(p.recipeId, (weight.get(p.recipeId) ?? 0) + 1);
+
+    const ctx = await loadDecorCtx(household.id);
+    const covFractionOf = (r: { ingredients: CostIngredient[] }) => {
+      const cov = recipeCoverage(
+        applySubs(r.ingredients as never[], ctx.subs) as never,
+        ctx.pantry,
+      );
+      return {
+        frac: cov.requiredCount > 0 ? cov.satisfiedCount / cov.requiredCount : 0,
+        cookable: cov.cookable,
+      };
+    };
+
+    // Cold start: no favorites or planning history yet -> surface well-regarded shared recipes,
+    // nudged by whatever the pantry can already cook.
+    if (weight.size === 0) {
+      const rows = await prisma.recipe.findMany({
+        where: { ...visible, isShared: true },
+        orderBy: [{ externalRating: { sort: 'desc', nulls: 'last' } }, { timesCooked: 'desc' }],
+        include: ingredientInclude,
+        take: take * 4,
+      });
+      const scored = rows.map((r) => {
+        const { frac } = covFractionOf(r);
+        return { r, s: (r.externalRating ?? 3) + 2 * frac + Math.random() };
+      });
+      scored.sort((a, b) => b.s - a.s);
+      return { reason: 'popular', items: scored.slice(0, take).map((x) => decorateRecipe(x.r, ctx)) };
+    }
+
+    // Learn cuisine / category / tag affinity from the signal recipes.
+    const signalRecipes = await prisma.recipe.findMany({
+      where: { id: { in: [...weight.keys()] } },
+      select: { id: true, cuisine: true, category: true, tags: true },
+    });
+    const cuisineW = new Map<string, number>();
+    const categoryW = new Map<string, number>();
+    const tagW = new Map<string, number>();
+    const bump = (m: Map<string, number>, k: string | null, w: number) => {
+      if (k) m.set(k, (m.get(k) ?? 0) + w);
+    };
+    for (const r of signalRecipes) {
+      const w = weight.get(r.id) ?? 1;
+      bump(cuisineW, r.cuisine, w);
+      bump(categoryW, r.category, w);
+      for (const t of r.tags) bump(tagW, t, w);
+    }
+    const top = (m: Map<string, number>, n: number) =>
+      [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map((e) => e[0]);
+    const topCuisines = top(cuisineW, 8);
+    const topCategories = top(categoryW, 10);
+    const topTags = top(tagW, 20);
+
+    // Candidate pool: visible recipes matching any liked facet, minus what's already favorited.
+    const orFacets: Prisma.RecipeWhereInput[] = [];
+    if (topCuisines.length) orFacets.push({ cuisine: { in: topCuisines } });
+    if (topCategories.length) orFacets.push({ category: { in: topCategories } });
+    if (topTags.length) orFacets.push({ tags: { hasSome: topTags } });
+
+    const candidates = await prisma.recipe.findMany({
+      where: {
+        AND: [
+          visible,
+          { id: { notIn: [...favIds] } },
+          ...(orFacets.length ? [{ OR: orFacets }] : []),
+        ],
+      },
+      orderBy: [{ externalRating: { sort: 'desc', nulls: 'last' } }],
+      include: ingredientInclude,
+      take: 600,
+    });
+
+    const scored = candidates.map((r) => {
+      const { frac, cookable } = covFractionOf(r);
+      const affinity =
+        1.5 * (r.cuisine ? cuisineW.get(r.cuisine) ?? 0 : 0) +
+        1.0 * (r.category ? categoryW.get(r.category) ?? 0 : 0) +
+        0.5 * r.tags.reduce((s, t) => s + (tagW.get(t) ?? 0), 0);
+      const conf =
+        r.externalRatingCount != null
+          ? Math.min(1, Math.log1p(r.externalRatingCount) / Math.log(50))
+          : 0.6;
+      const s =
+        affinity +
+        0.3 * (r.externalRating ?? 3) * conf +
+        2 * frac +
+        (cookable ? 1 : 0) +
+        Math.random() * 0.5; // jitter so the shelf refreshes
+      return { r, s };
+    });
+    scored.sort((a, b) => b.s - a.s);
+    return { reason: 'taste', items: scored.slice(0, take).map((x) => decorateRecipe(x.r, ctx)) };
   });
 
   // ---- Backend recipe discovery (TheMealDB) ----

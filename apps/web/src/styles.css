@@ -112,6 +112,92 @@ body {
 .error {
   color: var(--danger);
 }
+
+/* "Suggested for you" horizontal shelf */
+.suggest-shelf {
+  margin: 4px 0 12px;
+}
+.suggest-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.suggest-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.suggest-why {
+  font-size: 0.72rem;
+}
+.suggest-scroll {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.suggest-card {
+  position: relative;
+  flex: 0 0 150px;
+  width: 150px;
+  scroll-snap-align: start;
+  cursor: pointer;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.suggest-thumb {
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+  display: block;
+  background: var(--border);
+}
+.suggest-thumb.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+}
+.suggest-body {
+  padding: 8px 10px;
+}
+.suggest-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.suggest-meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-top: 4px;
+}
+.suggest-fav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.suggest-fav.on {
+  color: #ff6b81;
+}
 .notice {
   color: var(--green);
 }

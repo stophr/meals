@@ -130,6 +130,8 @@ export function Recipes() {
   const [sort, setSort] = useState<string>('name');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const [suggested, setSuggested] = useState<RecipeRow[]>([]);
+  const [suggestReason, setSuggestReason] = useState<'taste' | 'popular'>();
   const [detail, setDetail] = useState<RecipeRow>();
   const [subFor, setSubFor] = useState<string>();
   const [mode, setMode] = useState<'catalog' | 'discover'>('catalog');
@@ -200,9 +202,25 @@ export function Recipes() {
     api.get<Meta>('/recipes/meta').then(setMeta).catch(() => {});
   }, [items.length]);
 
+  const loadSuggested = useCallback(async () => {
+    try {
+      const res = await api.get<{ items: RecipeRow[]; reason: 'taste' | 'popular' }>(
+        '/recipes/suggested?take=12',
+      );
+      setSuggested(res.items);
+      setSuggestReason(res.reason);
+    } catch {
+      /* suggestions are best-effort; ignore */
+    }
+  }, []);
+  useEffect(() => {
+    loadSuggested();
+  }, [loadSuggested]);
+
   async function toggleFavorite(r: RecipeRow) {
     const updated = await api.post<RecipeRow>(`/recipes/${r.id}/favorite`);
     setItems((xs) => xs.map((x) => (x.id === r.id ? { ...x, isFavorite: updated.isFavorite } : x)));
+    setSuggested((xs) => xs.map((x) => (x.id === r.id ? { ...x, isFavorite: updated.isFavorite } : x)));
     if (detail?.id === r.id) setDetail({ ...detail, isFavorite: updated.isFavorite });
   }
 
@@ -567,6 +585,53 @@ export function Recipes() {
           ))}
         </select>
       </div>
+
+      {!q && !cuisine && !category && !complexity && !favOnly && !cookable && suggested.length > 0 && (
+        <div className="suggest-shelf">
+          <div className="suggest-head">
+            <h3>{suggestReason === 'taste' ? '✨ Suggested for you' : '✨ Popular picks'}</h3>
+            <span className="muted suggest-why">
+              {suggestReason === 'taste'
+                ? 'based on your favorites & plans'
+                : 'well-loved — to get you started'}
+            </span>
+          </div>
+          <div className="suggest-scroll">
+            {suggested.map((r) => (
+              <div key={r.id} className="suggest-card" onClick={() => openDetail(r.id)}>
+                {r.imageUrl ? (
+                  <img className="suggest-thumb" src={r.imageUrl} alt="" />
+                ) : (
+                  <div className="suggest-thumb placeholder">🍽️</div>
+                )}
+                <button
+                  className={`suggest-fav ${r.isFavorite ? 'on' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFavorite(r);
+                  }}
+                  aria-label="favorite"
+                >
+                  {r.isFavorite ? '♥' : '♡'}
+                </button>
+                <div className="suggest-body">
+                  <div className="suggest-name">{r.name}</div>
+                  <div className="suggest-meta">
+                    {r.coverage.cookable
+                      ? '🧺 cook now'
+                      : [
+                          r.cuisine,
+                          r.externalRating ? `★ ${r.externalRating.toFixed(1)}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ') || '—'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {notice && <p className="notice">{notice}</p>}
       {loading && <p className="muted">Loading…</p>}
