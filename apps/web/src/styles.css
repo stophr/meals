@@ -113,6 +113,16 @@ body {
   color: var(--danger);
 }
 
+.map-plu {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.map-plu code {
+  font-size: 0.8rem;
+}
+
 /* Product images (pantry + scan) */
 .scan-thumb {
   width: 48px;

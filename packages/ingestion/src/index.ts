@@ -12,3 +12,4 @@ export * from './ordering/cartLinks.js';
 export * from './nutrition/usda.js';
 export * from './products/upcitemdb.js';
 export * from './products/plu.js';
+export * from './products/pluCodes.js';

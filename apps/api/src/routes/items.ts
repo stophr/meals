@@ -10,7 +10,7 @@ import { buildNormKey, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
-import { resolveProduct, resolvePluProduct } from '../lib/productCorpus.js';
+import { resolveProduct, resolvePluProduct, mapGtinToPlu } from '../lib/productCorpus.js';
 import { extractPlu } from '@meals/ingestion';
 
 export async function itemRoutes(app: FastifyInstance) {
@@ -27,6 +27,25 @@ export async function itemRoutes(app: FastifyInstance) {
     if (upc) return resolveProduct(upc, household.id);
     reply.code(400);
     return { found: false, message: 'That doesn’t look like a product barcode or produce PLU.' };
+  });
+
+  // Learn a GTIN -> PLU mapping: when a scanned produce barcode (e.g. a branded GTIN) resolves to
+  // nothing, the app asks for the 4-5 digit PLU on the sticker; we remember it so the next scan
+  // of that GTIN resolves to the produce commodity + nutrition.
+  app.post('/items/map-plu', async (req, reply) => {
+    await getHousehold(req);
+    const { gtin, plu } = (req.body ?? {}) as { gtin?: string; plu?: string };
+    const g = normalizeUpc(gtin ?? '');
+    const pluDigits = (plu ?? '').replace(/\D/g, '');
+    if (!g) {
+      reply.code(400);
+      return { found: false, message: 'Invalid barcode.' };
+    }
+    if (!/^\d{4,5}$/.test(pluDigits)) {
+      reply.code(400);
+      return { found: false, message: 'Enter the 4–5 digit PLU from the sticker.' };
+    }
+    return mapGtinToPlu(g, pluDigits);
   });
 
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface

@@ -392,6 +392,8 @@ export function Inventory() {
   const [addProductId, setAddProductId] = useState<string>();
   const [addImageUrl, setAddImageUrl] = useState<string>();
   const [addExpires, setAddExpires] = useState('');
+  const [mapGtin, setMapGtin] = useState<string>(); // unmatched scanned GTIN awaiting a PLU
+  const [mapPluInput, setMapPluInput] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
   // True while the current add originated from a scan — so tapping Add reopens the scanner for
@@ -444,7 +446,45 @@ export function Inventory() {
     setAddBrand('');
     setAddProductId(undefined);
     setAddImageUrl(undefined);
+    setMapGtin(undefined);
     setAddResults(undefined);
+  }
+
+  async function submitMapPlu() {
+    const gtin = mapGtin;
+    const plu = mapPluInput.replace(/\D/g, '');
+    if (!gtin || !plu) return;
+    setScanBusy(true);
+    setMsg(undefined);
+    try {
+      const r = await api.post<{
+        found: boolean;
+        productId?: string;
+        item?: ItemHit;
+        brand?: string | null;
+        imageUrl?: string | null;
+        size?: { quantity: number; unit: string } | null;
+        message?: string;
+      }>('/items/map-plu', { gtin, plu });
+      if (r.found && r.item) {
+        pickItem(r.item); // clears mapGtin + product/brand/image
+        setFromScan(true);
+        setAddProductId(r.productId);
+        setAddImageUrl(r.imageUrl ?? undefined);
+        if (r.brand) setAddBrand(r.brand);
+        if (r.size) {
+          setAddQty(r.size.quantity);
+          setAddUnit(r.size.unit);
+        }
+        setMsg(`Learned — ${gtin} now maps to ${r.item.name} (PLU ${plu}). Set the amount and tap Add.`);
+      } else {
+        setMsg(r.message ?? 'That PLU wasn’t recognized.');
+      }
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanBusy(false);
+    }
   }
 
   async function createItem() {
@@ -474,6 +514,7 @@ export function Inventory() {
       }>(`/items/barcode/${upc}`);
       if (r.found && r.item) {
         pickItem(r.item); // sets item, default unit, clears brand/product/image
+        setMapGtin(undefined);
         setFromScan(true);
         setAddProductId(r.productId);
         setAddImageUrl(r.imageUrl ?? undefined);
@@ -494,10 +535,18 @@ export function Inventory() {
         setFromScan(false);
         setAddProductId(undefined);
         setAddImageUrl(undefined);
-        setMsg(
-          r.message ??
-            `${upc} isn’t in our sources. If it’s loose produce, type the 4–5 digit PLU from the sticker (e.g. 4011); otherwise type the item name.`,
-        );
+        // A 12-14 digit GTIN that resolved to nothing is likely branded produce — offer to learn
+        // it via its PLU. A short/typed code that failed just needs a name.
+        if (upc.length >= 12) {
+          setMapGtin(upc);
+          setMapPluInput('');
+          setMsg(undefined);
+        } else {
+          setMapGtin(undefined);
+          setMsg(
+            r.message ?? `${upc} isn’t recognized — type the item name to add it, or a produce PLU (e.g. 4011).`,
+          );
+        }
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
@@ -580,6 +629,7 @@ export function Inventory() {
               setAddBrand('');
               setAddProductId(undefined);
               setAddImageUrl(undefined);
+              setMapGtin(undefined);
             }}
           />
           <button
@@ -591,6 +641,34 @@ export function Inventory() {
             {scanBusy ? '…' : '📷 Scan'}
           </button>
         </div>
+        {mapGtin && (
+          <div className="map-plu">
+            <div className="muted">
+              Scanned <code>{mapGtin}</code> — not recognized. If it’s loose produce, enter the PLU
+              from the sticker to teach it:
+            </div>
+            <div className="sheet-row">
+              <input
+                className="sheet-input"
+                inputMode="numeric"
+                placeholder="PLU (e.g. 4011)"
+                value={mapPluInput}
+                onChange={(e) => setMapPluInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitMapPlu()}
+              />
+              <button
+                className="btn btn-inline"
+                onClick={submitMapPlu}
+                disabled={scanBusy || !mapPluInput.replace(/\D/g, '')}
+              >
+                Map
+              </button>
+              <button className="chip" onClick={() => setMapGtin(undefined)}>
+                cancel
+              </button>
+            </div>
+          </div>
+        )}
         {addResults && (
           <div className="autocomplete">
             {addResults.map((h) => (

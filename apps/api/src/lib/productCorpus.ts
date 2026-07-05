@@ -309,3 +309,77 @@ export async function resolvePluProduct(rawCode: string, _householdId: string): 
   await backfillItem(item.id, product);
   return shape(product);
 }
+
+/**
+ * Insert/refresh a Kroger product into the corpus (used by the produce crawl). Sets the
+ * description group from Kroger (top priority) + image; nutrition is left for scan-time USDA.
+ */
+export async function ingestKrogerProduct(p: KrogerProduct): Promise<'created' | 'updated' | 'skipped'> {
+  if (!p.upc || !p.description) return 'skipped';
+  const item = await resolveCanonicalItem(cleanOffName(p.description));
+  const sf = sizeFields(p.size);
+  const desc = {
+    description: cleanOffName(p.description),
+    brand: p.brand ?? null,
+    sizeText: p.size ?? null,
+    packSize: sf.packSize,
+    packUnit: sf.packUnit,
+    baseQuantity: sf.baseQuantity,
+    descriptionSource: 'KROGER' as never,
+    descriptionUpdatedAt: new Date(),
+    canonicalItemId: item.id,
+  };
+  const existing = await prisma.product.findUnique({
+    where: { upc: p.upc },
+    select: { id: true, descriptionSource: true, imageUrl: true },
+  });
+  let outcome: 'created' | 'updated' | 'skipped' = 'skipped';
+  if (!existing) {
+    await prisma.product.create({ data: { upc: p.upc, imageUrl: p.imageUrl ?? null, ...desc } as never });
+    outcome = 'created';
+  } else if (DESC_RANK['KROGER']! >= DESC_RANK[existing.descriptionSource]!) {
+    await prisma.product.update({
+      where: { id: existing.id },
+      data: { ...desc, ...(p.imageUrl && !existing.imageUrl ? { imageUrl: p.imageUrl } : {}) } as never,
+    });
+    outcome = 'updated';
+  }
+  const product = await prisma.product.findUnique({ where: { upc: p.upc } });
+  if (product) await backfillItem(item.id, product);
+  return outcome;
+}
+
+/**
+ * Learn a GTIN → PLU mapping (when a scanned produce barcode isn't a known GTIN and isn't a
+ * padded PLU — e.g. a branded produce GTIN). The user supplies the sticker's 4-5 digit PLU; we
+ * store a corpus entry keyed by the GTIN pointing at that commodity (+ USDA nutrition), so the
+ * next scan of that barcode resolves instantly. descriptionSource=MANUAL so it's never
+ * overwritten by a lower source.
+ */
+export async function mapGtinToPlu(gtin: string, pluCode: string): Promise<ResolvedProduct> {
+  const plu = resolvePlu(pluCode);
+  if (!plu) return { found: false, code: gtin };
+  const item = await resolveCanonicalItem(plu.name);
+  const usda = await lookupUsdaByName(
+    { apiKey: env.USDA_FDC_API_KEY, baseUrl: env.USDA_FDC_API_BASE },
+    plu.commodity,
+  ).catch(() => null);
+
+  const write: Record<string, unknown> = {
+    description: plu.name,
+    descriptionSource: 'MANUAL',
+    descriptionUpdatedAt: new Date(),
+    canonicalItemId: item.id,
+  };
+  if (usda && hasMacros(usda)) {
+    Object.assign(write, nutritionFields(usda), { nutritionSource: 'USDA', nutritionUpdatedAt: new Date() });
+  }
+  await prisma.product.upsert({
+    where: { upc: gtin },
+    create: { upc: gtin, ...write } as never,
+    update: write,
+  });
+  const product = await prisma.product.findUniqueOrThrow({ where: { upc: gtin } });
+  await backfillItem(item.id, product);
+  return shape(product);
+}
