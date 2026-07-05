@@ -389,6 +389,9 @@ export function Inventory() {
   const [addUnit, setAddUnit] = useState('EACH');
   const [scanning, setScanning] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
+  // True while the current add originated from a scan — so tapping Add reopens the scanner for
+  // the next item (rapid stock-as-you-unpack), while manual adds don't pop the camera.
+  const [fromScan, setFromScan] = useState(false);
 
   const refresh = () => setNonce((n) => n + 1);
   useEffect(() => setRemoved([]), [data]);
@@ -457,6 +460,7 @@ export function Inventory() {
       }>(`/items/barcode/${upc}`);
       if (r.found && r.item) {
         pickItem(r.item);
+        setFromScan(true);
         setMsg(
           `Scanned: ${r.item.name}${
             r.source === 'openfoodfacts' ? ' (via Open Food Facts)' : ''
@@ -465,6 +469,7 @@ export function Inventory() {
       } else {
         setAddSel(undefined);
         setAddQuery('');
+        setFromScan(false);
         setMsg(r.message ?? `Barcode ${upc} isn’t in the database — type the item name to add it.`);
       }
     } catch (e) {
@@ -476,13 +481,21 @@ export function Inventory() {
 
   async function addLot() {
     if (!addSel || addQty <= 0) return;
+    const name = addSel.name;
+    const chain = fromScan; // remember before we reset
     setMsg(undefined);
     try {
       await api.post('/inventory', { canonicalItemId: addSel.id, quantity: addQty, unit: addUnit });
       setAddSel(undefined);
       setAddQuery('');
       setAddQty(1);
+      setFromScan(false);
       refresh();
+      // Scanned item added -> jump straight back to the camera for the next one.
+      if (chain) {
+        setMsg(`Added ${name}. Scan the next item.`);
+        setScanning(true);
+      }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     }
@@ -525,6 +538,7 @@ export function Inventory() {
             onChange={(e) => {
               setAddQuery(e.target.value);
               setAddSel(undefined);
+              setFromScan(false);
             }}
           />
           <button

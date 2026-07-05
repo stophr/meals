@@ -1,10 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+
+// Retail 1-D formats we care about (plus CODE_128 for the odd store label).
+async function loadReader() {
+  const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
+    import('@zxing/browser'),
+    import('@zxing/library'),
+  ]);
+  const hints = new Map<number, unknown>([
+    [
+      DecodeHintType.POSSIBLE_FORMATS,
+      [
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.CODE_128,
+      ],
+    ],
+  ]);
+  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
+}
+
+type Status = 'starting' | 'scanning' | 'error';
 
 /**
- * Full-screen camera barcode scanner. Uses the phone's back camera via getUserMedia (works in
- * iOS Safari over HTTPS — which we have via the Cloudflare tunnel) and decodes UPC/EAN with
- * @zxing, loaded on demand so it never weighs down the main bundle. Falls back to typing the
- * digits if the camera can't start. Calls onDetected once with the raw barcode string.
+ * Live barcode scanner. The camera preview decodes CONTINUOUSLY on its own — everything runs
+ * locally in the browser (zxing on the video frames); nothing is uploaded, only the decoded
+ * digits go to the server for lookup. Tapping the preview forces a one-shot decode of the
+ * current frame (same local pipeline — never the native camera app), as a manual backup when
+ * continuous decode is being stubborn. Typing the digits is the last resort.
  */
 export function BarcodeScanner({
   onDetected,
@@ -14,70 +39,98 @@ export function BarcodeScanner({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const readerRef = useRef<Awaited<ReturnType<typeof loadReader>>>();
   const cbRef = useRef(onDetected);
   cbRef.current = onDetected;
   const doneRef = useRef(false);
+  const controlsRef = useRef<{ stop: () => void }>();
+  const [status, setStatus] = useState<Status>('starting');
   const [error, setError] = useState<string>();
+  const [tapMsg, setTapMsg] = useState<string>();
   const [manual, setManual] = useState('');
 
-  useEffect(() => {
-    let controls: { stop: () => void } | undefined;
-    let cancelled = false;
+  function finish(code: string) {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    controlsRef.current?.stop();
+    cbRef.current(code);
+  }
 
+  useEffect(() => {
+    let cancelled = false;
     (async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError('Camera needs a secure (https) connection.');
+        setStatus('error');
+        setError('Live camera needs an https connection. Type the barcode digits below instead.');
         return;
       }
       try {
-        const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
-          import('@zxing/browser'),
-          import('@zxing/library'),
-        ]);
-        // Only retail 1-D formats: faster and far fewer misreads than all-formats.
-        const hints = new Map<number, unknown>([
-          [
-            DecodeHintType.POSSIBLE_FORMATS,
-            [BarcodeFormat.UPC_A, BarcodeFormat.UPC_E, BarcodeFormat.EAN_13, BarcodeFormat.EAN_8],
-          ],
-        ]);
-        const reader = new BrowserMultiFormatReader(hints);
-        if (cancelled || !videoRef.current) return;
-        controls = await reader.decodeFromConstraints(
-          { video: { facingMode: 'environment' } },
-          videoRef.current,
+        const reader = await loadReader();
+        readerRef.current = reader;
+        const video = videoRef.current;
+        if (cancelled || !video) return;
+        // iOS autoplay: the muted *property* (not just the attribute) must be set, or the video
+        // won't play and there are no frames to decode.
+        video.muted = true;
+        video.setAttribute('playsinline', 'true');
+        const controls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' } } },
+          video,
           (result) => {
-            if (result && !doneRef.current) {
-              doneRef.current = true;
-              controls?.stop();
-              cbRef.current(result.getText());
-            }
+            if (result) finish(result.getText());
           },
         );
+        if (cancelled) {
+          controls.stop();
+          return;
+        }
+        controlsRef.current = controls;
+        setStatus('scanning');
       } catch (e) {
+        if (cancelled) return;
+        setStatus('error');
         setError(
           e instanceof DOMException && e.name === 'NotAllowedError'
-            ? 'Camera permission denied. Allow camera access, or type the barcode below.'
+            ? 'Camera permission denied. Allow it in Safari settings, or type the digits below.'
             : e instanceof Error
               ? e.message
-              : 'Could not start the camera.',
+              : 'Could not start the camera. Type the digits below instead.',
         );
       }
     })();
-
     return () => {
       cancelled = true;
-      controls?.stop();
+      controlsRef.current?.stop();
     };
   }, []);
 
-  function submitManual(e: React.FormEvent) {
+  // Manual backup: decode the current video frame locally (no native camera app).
+  function scanCurrentFrame() {
+    const video = videoRef.current;
+    const reader = readerRef.current;
+    if (!video || !reader || doneRef.current) return;
+    if (!video.videoWidth || !video.videoHeight) {
+      setTapMsg('Camera still starting — give it a second, then tap again.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    try {
+      const result = reader.decodeFromCanvas(canvas);
+      finish(result.getText());
+    } catch {
+      setTapMsg('No barcode read — fill the box with the barcode and tap again.');
+    }
+  }
+
+  function submitManual(e: FormEvent) {
     e.preventDefault();
     const code = manual.replace(/\D/g, '');
-    if (code && !doneRef.current) {
-      doneRef.current = true;
-      cbRef.current(code);
-    }
+    if (code) finish(code);
   }
 
   return (
@@ -88,24 +141,35 @@ export function BarcodeScanner({
           ✕
         </button>
       </div>
-      {error ? (
-        <p className="scanner-error">{error}</p>
+
+      {status === 'error' ? (
+        <div className="scanner-error">{error}</div>
       ) : (
-        <div className="scanner-frame">
+        <button
+          type="button"
+          className="scanner-frame"
+          onClick={scanCurrentFrame}
+          aria-label="tap to scan the barcode"
+        >
           <video ref={videoRef} className="scanner-video" muted playsInline autoPlay />
           <div className="scanner-reticle" />
-          <p className="scanner-hint">Point the back camera at the product barcode</p>
-        </div>
+          <p className="scanner-hint">
+            {status === 'starting'
+              ? 'Starting camera…'
+              : (tapMsg ?? 'Center the barcode — it scans automatically, or tap the screen to scan')}
+          </p>
+        </button>
       )}
+
       <form className="scanner-manual" onSubmit={submitManual}>
         <input
           inputMode="numeric"
           placeholder="or type the barcode digits"
           value={manual}
-          onChange={(e) => setManual(e.target.value)}
+          onChange={(ev) => setManual(ev.target.value)}
         />
         <button className="btn btn-inline" type="submit" disabled={!manual.replace(/\D/g, '')}>
-          Look up
+          Go
         </button>
       </form>
     </div>

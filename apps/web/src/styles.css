@@ -145,6 +145,14 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  /* it's a <button> so the whole preview is tappable to capture */
+  width: 100%;
+  border: none;
+  padding: 0;
+  background: #000;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 .scanner-video {
   width: 100%;
