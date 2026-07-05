@@ -15,25 +15,28 @@ async function loadReader() {
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
-        // GS1 DataBar family — the barcode on produce stickers is usually DataBar (Expanded)
-        // Stacked, which needs RSS_EXPANDED. zxing checksum-validates these.
+        // GS1 DataBar family — produce stickers are usually DataBar (Expanded) Stacked.
         BarcodeFormat.RSS_14,
         BarcodeFormat.RSS_EXPANDED,
       ],
     ],
   ]);
-  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
+  const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 });
+  const names: Record<number, string> = {};
+  for (const k of Object.keys(BarcodeFormat)) {
+    const v = (BarcodeFormat as Record<string, unknown>)[k];
+    if (typeof v === 'number') names[v] = k;
+  }
+  return { reader, fmtName: (n: number) => names[n] ?? String(n) };
 }
 
 type Status = 'starting' | 'scanning' | 'error';
 
 /**
- * Live barcode scanner. We drive the decode loop ourselves — get the camera stream, then on a
- * timer draw the current video frame to a canvas and decode it with zxing. This is far more
- * reliable on iOS Safari than zxing's built-in continuous decoder, whose internal frame capture
- * often never fires (preview plays, but nothing decodes). Everything runs locally; only the
- * decoded digits are sent for lookup. Tap the preview to force an immediate decode; typing the
- * digits is the last resort.
+ * Live barcode scanner. We drive the decode loop ourselves (getUserMedia -> draw each video
+ * frame to a canvas -> decode) because zxing's built-in continuous decoder is unreliable on iOS.
+ * Debug mode (🐞) surfaces camera resolution, frames scanned, and the last decode so we can see
+ * whether the camera + decoder are working at all.
  */
 export function BarcodeScanner({
   onDetected,
@@ -49,10 +52,16 @@ export function BarcodeScanner({
   const cbRef = useRef(onDetected);
   cbRef.current = onDetected;
   const doneRef = useRef(false);
+  const debugRef = useRef(false);
+  const dbgRef = useRef({ frames: 0, dims: '—', last: '', lastCode: '' });
   const [status, setStatus] = useState<Status>('starting');
   const [error, setError] = useState<string>();
   const [tapMsg, setTapMsg] = useState<string>();
   const [manual, setManual] = useState('');
+  const [debug, setDebug] = useState(false);
+  debugRef.current = debug;
+  const [, forceRender] = useState(0);
+  const rerender = () => forceRender((x) => x + 1);
 
   function stopCamera() {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -68,8 +77,8 @@ export function BarcodeScanner({
 
   function decodeFrame(): boolean {
     const video = videoRef.current;
-    const reader = readerRef.current;
-    if (!video || !reader || !video.videoWidth || !video.videoHeight) return false;
+    const loaded = readerRef.current;
+    if (!video || !loaded || !video.videoWidth || !video.videoHeight) return false;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -77,7 +86,16 @@ export function BarcodeScanner({
     if (!ctx) return false;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     try {
-      finish(reader.decodeFromCanvas(canvas).getText()); // zxing checksum-validates the decode
+      const result = loaded.reader.decodeFromCanvas(canvas);
+      const text = result.getText();
+      if (debugRef.current) {
+        // Show what was read; let the user confirm it rather than auto-closing.
+        dbgRef.current.last = `${loaded.fmtName(result.getBarcodeFormat())}: ${text}`;
+        dbgRef.current.lastCode = text;
+        rerender();
+        return true;
+      }
+      finish(text); // zxing checksum-validates the decode
       return true;
     } catch {
       return false; // no barcode in this frame
@@ -111,7 +129,10 @@ export function BarcodeScanner({
 
         const tick = () => {
           if (cancelled || doneRef.current) return;
+          dbgRef.current.frames++;
+          dbgRef.current.dims = video.videoWidth ? `${video.videoWidth}×${video.videoHeight}` : '0×0 (no frames)';
           decodeFrame();
+          if (debugRef.current) rerender();
           if (!doneRef.current) timerRef.current = setTimeout(tick, 250);
         };
         tick();
@@ -148,13 +169,23 @@ export function BarcodeScanner({
     if (code) finish(code);
   }
 
+  const dbg = dbgRef.current;
   return (
     <div className="scanner-overlay">
       <div className="scanner-head">
         <span>📷 Scan a barcode</span>
-        <button className="scanner-x" onClick={onClose} aria-label="close scanner">
-          ✕
-        </button>
+        <span>
+          <button
+            className={`scanner-dbg ${debug ? 'on' : ''}`}
+            onClick={() => setDebug((d) => !d)}
+            aria-label="debug"
+          >
+            🐞
+          </button>
+          <button className="scanner-x" onClick={onClose} aria-label="close scanner">
+            ✕
+          </button>
+        </span>
       </div>
 
       {status === 'error' ? (
@@ -163,6 +194,18 @@ export function BarcodeScanner({
         <button type="button" className="scanner-frame" onClick={onTap} aria-label="tap to scan the barcode">
           <video ref={videoRef} className="scanner-video" muted playsInline autoPlay />
           <div className="scanner-reticle" />
+          {debug && (
+            <div className="scanner-debug">
+              <div>camera: {dbg.dims}</div>
+              <div>frames scanned: {dbg.frames}</div>
+              <div>last read: {dbg.last || '— nothing yet'}</div>
+              {dbg.lastCode && (
+                <button className="btn btn-inline" onClick={() => finish(dbg.lastCode)}>
+                  ✓ Use “{dbg.lastCode}”
+                </button>
+              )}
+            </div>
+          )}
           <p className="scanner-hint">
             {status === 'starting'
               ? 'Starting camera…'
