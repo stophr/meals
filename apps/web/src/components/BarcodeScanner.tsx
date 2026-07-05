@@ -22,7 +22,11 @@ async function loadReader() {
       ],
     ],
   ]);
-  return new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
+  const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 150 });
+  // DataBar (RSS) is misread-prone, so we confirm it twice; UPC/EAN/128 are check-digit-validated
+  // and accepted on the first read (instant).
+  const rss = new Set<number>([BarcodeFormat.RSS_14, BarcodeFormat.RSS_EXPANDED]);
+  return { reader, rss };
 }
 
 type Status = 'starting' | 'scanning' | 'error';
@@ -69,8 +73,9 @@ export function BarcodeScanner({
         return;
       }
       try {
-        const reader = await loadReader();
-        readerRef.current = reader;
+        const loaded = await loadReader();
+        readerRef.current = loaded;
+        const { reader, rss } = loaded;
         const video = videoRef.current;
         if (cancelled || !video) return;
         // iOS autoplay: the muted *property* (not just the attribute) must be set, or the video
@@ -82,9 +87,13 @@ export function BarcodeScanner({
           video,
           (result) => {
             if (!result) return;
-            // Accept only after the SAME value decodes twice in a row — a 1-D/DataBar misread
-            // rarely repeats, so this filters the confident-but-wrong reads.
             const t = result.getText();
+            // UPC/EAN/128 are check-digit-validated -> accept on first read (instant). Only the
+            // misread-prone DataBar (RSS) must repeat the SAME value twice before we trust it.
+            if (!rss.has(result.getBarcodeFormat())) {
+              finish(t);
+              return;
+            }
             if (t === stableRef.current.code) {
               if (++stableRef.current.n >= 2) finish(t);
             } else {
@@ -119,7 +128,7 @@ export function BarcodeScanner({
   // Manual backup: decode the current video frame locally (no native camera app).
   function scanCurrentFrame() {
     const video = videoRef.current;
-    const reader = readerRef.current;
+    const reader = readerRef.current?.reader;
     if (!video || !reader || doneRef.current) return;
     if (!video.videoWidth || !video.videoHeight) {
       setTapMsg('Camera still starting — give it a second, then tap again.');
