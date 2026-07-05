@@ -494,7 +494,10 @@ export function Inventory() {
         setFromScan(false);
         setAddProductId(undefined);
         setAddImageUrl(undefined);
-        setMsg(r.message ?? `Barcode ${upc} isn’t in the database — type the item name to add it.`);
+        setMsg(
+          r.message ??
+            `${upc} isn’t in our sources. If it’s loose produce, type the 4–5 digit PLU from the sticker (e.g. 4011); otherwise type the item name.`,
+        );
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));

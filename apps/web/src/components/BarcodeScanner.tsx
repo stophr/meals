@@ -16,8 +16,9 @@ async function loadReader() {
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
-        BarcodeFormat.RSS_14, // GS1 DataBar — the barcode on many produce stickers (PLU)
-        BarcodeFormat.RSS_EXPANDED,
+        BarcodeFormat.RSS_14, // GS1 DataBar — the barcode on many produce stickers
+        // RSS_EXPANDED deliberately omitted: it misreads far more often and produced confident
+        // wrong matches on produce. RSS_14 covers the common produce DataBar.
       ],
     ],
   ]);
@@ -46,6 +47,7 @@ export function BarcodeScanner({
   cbRef.current = onDetected;
   const doneRef = useRef(false);
   const controlsRef = useRef<{ stop: () => void }>();
+  const stableRef = useRef({ code: '', n: 0 }); // require the same read twice (anti-misread)
   const [status, setStatus] = useState<Status>('starting');
   const [error, setError] = useState<string>();
   const [tapMsg, setTapMsg] = useState<string>();
@@ -79,7 +81,15 @@ export function BarcodeScanner({
           { video: { facingMode: { ideal: 'environment' } } },
           video,
           (result) => {
-            if (result) finish(result.getText());
+            if (!result) return;
+            // Accept only after the SAME value decodes twice in a row — a 1-D/DataBar misread
+            // rarely repeats, so this filters the confident-but-wrong reads.
+            const t = result.getText();
+            if (t === stableRef.current.code) {
+              if (++stableRef.current.n >= 2) finish(t);
+            } else {
+              stableRef.current = { code: t, n: 1 };
+            }
           },
         );
         if (cancelled) {

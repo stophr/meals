@@ -20,8 +20,16 @@ interface RawItem {
   brand?: string;
   description?: string;
   size?: string;
+  category?: string;
   images?: string[];
 }
+
+// UPCitemdb is the lowest-confidence source and spans all merchandise; a misread/mismatched
+// grocery barcode can resolve to unrelated goods (a produce scan came back a "Dell SAS SSD").
+// Reject matches whose category is clearly not a pantry item, so a wrong answer becomes "not
+// found" (prompting a typed PLU / name) instead of polluting the corpus.
+const NON_PANTRY =
+  /electronic|computer|laptop|\bdrive\b|\bssd\b|hard disk|server|networking|automotive|vehicle|\btire\b|apparel|clothing|footwear|\bshoe|jewelry|\bwatch\b|furniture|mattress|hardware|power tool|office|video game|\bcamera\b|\bphone\b|tablet|television|media|movie|music|\bbook/i;
 
 export async function lookupUpcItemDb(cfg: UpcItemDbConfig, upc: string): Promise<UpcItemDbProduct | null> {
   const code = upc.replace(/\D/g, '');
@@ -41,6 +49,7 @@ export async function lookupUpcItemDb(cfg: UpcItemDbConfig, upc: string): Promis
     const it = data.items?.[0];
     const description = (it?.title || it?.description || '').trim();
     if (!description) return null;
+    if (it?.category && NON_PANTRY.test(it.category)) return null; // clearly not a pantry item
     return {
       description,
       brand: it?.brand?.trim() || null,
