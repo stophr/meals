@@ -21,6 +21,10 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Don't serve the cached app shell for these navigations — they must reach the network
+        // (and Cloudflare Access) so an expired session can re-authenticate instead of silently
+        // loading the offline shell. `/?reauth=1` is the recovery bounce (see lib/api.ts).
+        navigateFallbackDenylist: [/[?&]reauth=1\b/, /^\/api\//, /^\/cdn-cgi\//],
         // Cache the active shopping list so it works in-store with no signal.
         runtimeCaching: [
           {

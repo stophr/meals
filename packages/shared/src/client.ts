@@ -23,6 +23,10 @@ export interface ClientOptions {
   // Injected later for auth (Phase 3). No-op today.
   getAuthHeader?: () => Record<string, string> | undefined;
   fetchImpl?: typeof fetch;
+  // Called when fetch REJECTS (network layer) rather than returning a response — e.g. behind
+  // Cloudflare Access, an expired session 302s a same-origin /api XHR to a cross-origin login
+  // that fetch can't follow, surfacing as "Load failed". Lets the host app re-authenticate.
+  onNetworkError?: () => void;
 }
 
 export function createClient(opts: ClientOptions) {
@@ -33,11 +37,19 @@ export function createClient(opts: ClientOptions) {
     const headers: Record<string, string> = { ...opts.getAuthHeader?.() };
     if (body !== undefined) headers['content-type'] = 'application/json';
 
-    const res = await doFetch(`${base}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await doFetch(`${base}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (err) {
+      // Network-layer failure (offline, DNS, or a cross-origin Access-login redirect fetch
+      // can't follow). Give the host a chance to re-authenticate, then surface a clean error.
+      opts.onNetworkError?.();
+      throw new ApiError(0, 'Could not reach the server', err);
+    }
 
     const text = await res.text();
     const parsed = text ? JSON.parse(text) : undefined;
