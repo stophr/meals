@@ -5,7 +5,7 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | # | Request | From | Status | Effort | Needs schema? |
 |---|---------|------|--------|--------|---------------|
 | 1 | "Suggested" recipes — household-taste recommendations at top of Recipes | beta tester | **shipped** (2026-07-04) | S–M | no |
-| 2 | Scan a UPC with phone camera to add a pantry item | beta tester | planned | M | small (barcode→item cache) |
+| 2 | Scan a UPC with phone camera to add a pantry item | beta tester | **shipped** (2026-07-04) | M | `CanonicalItem.upcs[]` added |
 
 ---
 
@@ -37,9 +37,17 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 
 ---
 
-## 2. Scan a UPC with the phone camera
+## 2. Scan a UPC with the phone camera — SHIPPED 2026-07-04
 
 **Ask:** During pantry entry, scan a product barcode with the phone instead of typing.
+
+**Shipped (PWA, no native app):**
+- **Web:** `apps/web/src/components/BarcodeScanner.tsx` — full-screen camera overlay, back camera via `getUserMedia`, decodes UPC-A/UPC-E/EAN-13/EAN-8 with `@zxing/browser` + `@zxing/library` (dynamically imported → own async chunk, ~340 KB, loaded only on tap). Permission-denied + insecure-context handled; always offers a type-the-digits fallback. Wired into the Pantry "Add to pantry" card as a **📷 Scan** button (`Inventory.tsx`); a hit prefills the existing add form (item + unit) so the user just sets the amount and taps Add.
+- **API:** `GET /items/barcode/:code` (`apps/api/src/routes/items.ts`) → `lib/barcode.ts#resolveBarcode`: **(1)** our cache (`CanonicalItem.upcs`, instant), **(2)** a matched store listing (`ProviderProduct.upc`, cached forward), **(3)** **Open Food Facts** (free, no key, 5 s timeout) → `resolveCanonicalItem(name)` → UPC cached onto the item. Unknown → `found:false` (manual entry). Invalid barcode → 400.
+- **Schema:** `CanonicalItem.upcs String[]` + GIN index — global barcode cache (a UPC identifies the same product everywhere), matching the now-global canonical dictionary.
+- **Verified:** OFF lookup (Nutella `3017620422003` → created+cached), second scan `source:"known"`, invalid → 400, unknown → `found:false`, live on the container. **Not yet device-tested:** the actual camera decode on a real iPhone (headless env has no camera) — needs a real-phone smoke test.
+
+**Follow-ups:** persist scanned `brand`/pack size onto the lot; feed OFF `categories` into the item's category; a native scanner (Phase 3) for tougher lighting/focus.
 
 **Feasible now as a PWA — a native app is NOT required.** iOS Safari supports `getUserMedia` (camera) over HTTPS, and we already serve HTTPS via the Cloudflare tunnel.
 

@@ -4,6 +4,7 @@ import { UNIT_TABLE, BASE_UNIT, dimensionOf } from '@meals/shared';
 import type { UnitDimension, Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
+import { BarcodeScanner } from '../components/BarcodeScanner.js';
 
 // Units grouped by what they measure, Imperial-first for a US household. A count can't be
 // deducted against a recipe's "2 cups sugar", so weight/volume lead each group.
@@ -386,6 +387,8 @@ export function Inventory() {
   const [addSel, setAddSel] = useState<ItemHit>();
   const [addQty, setAddQty] = useState(1);
   const [addUnit, setAddUnit] = useState('EACH');
+  const [scanning, setScanning] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
 
   const refresh = () => setNonce((n) => n + 1);
   useEffect(() => setRemoved([]), [data]);
@@ -438,6 +441,37 @@ export function Inventory() {
     if (!name) return;
     const item = await api.post<ItemHit>('/items', { name });
     pickItem(item);
+  }
+
+  async function onScanned(code: string) {
+    setScanning(false);
+    setScanBusy(true);
+    setMsg(undefined);
+    const upc = code.replace(/\D/g, '');
+    try {
+      const r = await api.get<{
+        found: boolean;
+        item?: ItemHit;
+        source?: 'known' | 'provider' | 'openfoodfacts';
+        message?: string;
+      }>(`/items/barcode/${upc}`);
+      if (r.found && r.item) {
+        pickItem(r.item);
+        setMsg(
+          `Scanned: ${r.item.name}${
+            r.source === 'openfoodfacts' ? ' (via Open Food Facts)' : ''
+          } — set the amount and tap Add.`,
+        );
+      } else {
+        setAddSel(undefined);
+        setAddQuery('');
+        setMsg(r.message ?? `Barcode ${upc} isn’t in the database — type the item name to add it.`);
+      }
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanBusy(false);
+    }
   }
 
   async function addLot() {
@@ -493,6 +527,14 @@ export function Inventory() {
               setAddSel(undefined);
             }}
           />
+          <button
+            className="btn btn-inline scan-btn"
+            onClick={() => setScanning(true)}
+            disabled={scanBusy}
+            title="Scan a product barcode"
+          >
+            {scanBusy ? '…' : '📷 Scan'}
+          </button>
         </div>
         {addResults && (
           <div className="autocomplete">
@@ -572,6 +614,8 @@ export function Inventory() {
           onClose={() => setEditing(undefined)}
         />
       )}
+
+      {scanning && <BarcodeScanner onDetected={onScanned} onClose={() => setScanning(false)} />}
     </section>
   );
 }

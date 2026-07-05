@@ -9,8 +9,23 @@ import {
 import { buildNormKey, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
+import { normalizeUpc, resolveBarcode } from '../lib/barcode.js';
 
 export async function itemRoutes(app: FastifyInstance) {
+  // Resolve a phone-scanned barcode to a catalog item (cache -> store listing -> Open Food
+  // Facts). Member-gated but the mapping itself is global. The web then prefills the pantry
+  // add form with the returned item; unknown codes fall back to manual entry.
+  app.get('/items/barcode/:code', async (req, reply) => {
+    await getHousehold(req); // members only
+    const { code } = req.params as { code: string };
+    const upc = normalizeUpc(code);
+    if (!upc) {
+      reply.code(400);
+      return { found: false, message: 'That doesn’t look like a product barcode.' };
+    }
+    return resolveBarcode(upc);
+  });
+
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface
   // first — typing "sugar" returns "Sugar" ahead of "Brown Sugar", "Demerara Sugar", etc.
   app.get('/items', async (req) => {

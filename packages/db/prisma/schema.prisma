@@ -221,6 +221,10 @@ model CanonicalItem {
   // Normalized dedup key (lowercased, unit/pack stripped) — used by the matcher.
   normKey String
 
+  // Barcodes (UPC-A/EAN-13/…) that scan to this store-agnostic concept. GLOBAL, like the item
+  // itself: learned from phone scans + Open Food Facts, so the next scan resolves instantly.
+  upcs String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -234,6 +238,7 @@ model CanonicalItem {
 
   @@index([normKey])
   @@index([name])
+  @@index([upcs], type: Gin)
 }
 
 // Maps a messy ingredient name ("packed dark brown sugar", "pinch of sugar") to the buyable
