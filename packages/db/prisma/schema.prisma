@@ -60,6 +60,16 @@ enum PriceSource {
   SCRAPE
 }
 
+// Where a Product field-group (description vs nutrition) was sourced from. Precedence between
+// them is configured independently in code (see apps/api/src/lib/productCorpus.ts).
+enum ProductSource {
+  KROGER // Fry's / any Kroger banner — authoritative for description/brand/size
+  STORE // another store integration
+  USDA // USDA FoodData Central — authoritative for nutrition
+  OFF // Open Food Facts
+  MANUAL // user-entered / legacy
+}
+
 enum JobType {
   OCR_RECEIPT
   OCR_FLYER
@@ -221,14 +231,16 @@ model CanonicalItem {
   // Normalized dedup key (lowercased, unit/pack stripped) — used by the matcher.
   normKey String
 
-  // Barcodes (UPC-A/EAN-13/…) that scan to this store-agnostic concept. GLOBAL, like the item
-  // itself: learned from phone scans + Open Food Facts, so the next scan resolves instantly.
-  upcs String[] @default([])
+  // Representative product for this ingredient — used for recipe nutrition when the item isn't
+  // currently stocked (recipes reference the generic ingredient, not a specific container).
+  referenceProductId String?
+  referenceProduct   Product? @relation("ItemReferenceProduct", fields: [referenceProductId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   products          ProviderProduct[]
+  upcProducts       Product[]          @relation("ItemProducts")
   recipeIngredients RecipeIngredient[]
   inventory         InventoryLot[]
   shoppingListItems ShoppingListItem[]
@@ -238,7 +250,7 @@ model CanonicalItem {
 
   @@index([normKey])
   @@index([name])
-  @@index([upcs], type: Gin)
+  @@index([referenceProductId])
 }
 
 // Maps a messy ingredient name ("packed dark brown sugar", "pinch of sugar") to the buyable
@@ -362,6 +374,53 @@ model ProviderProduct {
   @@index([providerId])
   @@index([canonicalItemId])
   @@index([upc])
+}
+
+// Local UPC corpus: a store-agnostic branded PRODUCT (a "container" of an ingredient), keyed by
+// UPC. Built up + refreshed from the most accurate source first — Fry's/Kroger for
+// description/brand/size, USDA/OFF for nutrition — with the two field-groups sourced by
+// INDEPENDENT precedence. ProviderProduct (store price) references the same UPC; InventoryLot
+// points here as the physical container on the shelf. Everything except water is a Product.
+model Product {
+  id  String @id @default(cuid())
+  upc String @unique
+
+  canonicalItemId String
+  canonicalItem   CanonicalItem @relation("ItemProducts", fields: [canonicalItemId], references: [id], onDelete: Cascade)
+
+  // Description group (Fry's > other stores > OFF).
+  description String
+  brand       String?
+  sizeText    String? // as printed, e.g. "32 fl oz"
+  packSize     Decimal? @db.Decimal(12, 4)
+  packUnit     Unit?
+  baseQuantity Decimal? @db.Decimal(14, 4) // net contents in base units
+  imageUrl     String?
+  descriptionSource    ProductSource @default(MANUAL)
+  descriptionUpdatedAt DateTime      @default(now())
+
+  // Nutrition group, per serving (USDA > OFF). Nulls = unknown.
+  servingText         String? // e.g. "2 tbsp (30 ml)"
+  servingBaseQuantity Decimal? @db.Decimal(14, 4) // one serving in base units
+  servingsPerContainer Decimal? @db.Decimal(10, 2)
+  calories  Decimal? @db.Decimal(10, 2)
+  proteinG  Decimal? @db.Decimal(10, 2)
+  carbsG    Decimal? @db.Decimal(10, 2)
+  sugarG    Decimal? @db.Decimal(10, 2)
+  fiberG    Decimal? @db.Decimal(10, 2)
+  fatG      Decimal? @db.Decimal(10, 2)
+  satFatG   Decimal? @db.Decimal(10, 2)
+  sodiumMg  Decimal? @db.Decimal(10, 2)
+  nutritionSource    ProductSource?
+  nutritionUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventory     InventoryLot[]
+  referenceFor  CanonicalItem[] @relation("ItemReferenceProduct")
+
+  @@index([canonicalItemId])
 }
 
 // Learned rawName -> product mapping, persisted from every human review decision so the
@@ -522,6 +581,11 @@ model InventoryLot {
   canonicalItemId String
   canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
 
+  // The specific container (UPC product) on the shelf, when known (e.g. scanned). Nutrition +
+  // brand/size come from here; the canonical item stays the ingredient recipes reference.
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
   quantity     Decimal  @db.Decimal(12, 4)
   unit         Unit
   baseQuantity Decimal  @db.Decimal(14, 4)
@@ -537,6 +601,7 @@ model InventoryLot {
 
   @@index([householdId, canonicalItemId])
   @@index([householdId, expiresAt])
+  @@index([productId])
 }
 
 // ---------------------------------------------------------------------------

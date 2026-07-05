@@ -113,6 +113,33 @@ body {
   color: var(--danger);
 }
 
+/* Recipe nutrition panel */
+.nutri {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.nutri-head {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+.nutri-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.nutri-item {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.nutri-item b {
+  color: var(--text, inherit);
+  font-weight: 600;
+}
+
 /* Barcode scanner overlay */
 .scanner-overlay {
   position: fixed;

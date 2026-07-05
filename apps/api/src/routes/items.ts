@@ -9,21 +9,22 @@ import {
 import { buildNormKey, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
-import { normalizeUpc, resolveBarcode } from '../lib/barcode.js';
+import { normalizeUpc } from '../lib/upcUtil.js';
+import { resolveProduct } from '../lib/productCorpus.js';
 
 export async function itemRoutes(app: FastifyInstance) {
-  // Resolve a phone-scanned barcode to a catalog item (cache -> store listing -> Open Food
-  // Facts). Member-gated but the mapping itself is global. The web then prefills the pantry
-  // add form with the returned item; unknown codes fall back to manual entry.
+  // Resolve a phone-scanned barcode against the local UPC corpus, enriching from the most
+  // accurate source first (Fry's for description, USDA/OFF for nutrition) on the first scan.
+  // Returns the Product (brand/size/nutrition) + its ingredient so the pantry can prefill.
   app.get('/items/barcode/:code', async (req, reply) => {
-    await getHousehold(req); // members only
+    const household = await getHousehold(req); // members only; store selection is per-org
     const { code } = req.params as { code: string };
     const upc = normalizeUpc(code);
     if (!upc) {
       reply.code(400);
       return { found: false, message: 'That doesn’t look like a product barcode.' };
     }
-    return resolveBarcode(upc);
+    return resolveProduct(upc, household.id);
   });
 
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface

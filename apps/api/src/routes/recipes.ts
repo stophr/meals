@@ -16,6 +16,7 @@ import { recipeCoverage } from '../lib/coverage.js';
 import { pantryLots, consumeFromInventory } from '../lib/inventory.js';
 import { subMap, applySubs } from '../lib/substitutions.js';
 import { ingestRecipe, externalIdForUrl } from '../lib/recipeIngest.js';
+import { recipeNutrition } from '../lib/recipeNutrition.js';
 import {
   loadItemPrices,
   costRecipe,
@@ -467,13 +468,14 @@ export async function recipeRoutes(app: FastifyInstance) {
       where: { id },
       include: { ingredients: { include: { canonicalItem: true } } },
     });
-    const [pantry, prices, subs, fav] = await Promise.all([
+    const [pantry, prices, subs, fav, nutrition] = await Promise.all([
       pantryLots(household.id),
       loadItemPrices(household.id),
       subMap(household.id, id), // global + this-recipe substitutions
       prisma.recipeFavorite.findUnique({
         where: { householdId_recipeId: { householdId: household.id, recipeId: id } },
       }),
+      recipeNutrition(id, household.id), // per-org: uses the org's stocked products
     ]);
     const ingredients = applySubs(recipe.ingredients, subs);
     const coverage = recipeCoverage(ingredients, pantry);
@@ -481,6 +483,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       ...recipe,
       isFavorite: !!fav, // per-org
       canShare: recipe.householdId === household.id, // owner org can toggle sharing
+      nutrition,
       ingredients,
       coverage,
       cookTonightCost: cookTonightCost(

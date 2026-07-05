@@ -387,6 +387,9 @@ export function Inventory() {
   const [addSel, setAddSel] = useState<ItemHit>();
   const [addQty, setAddQty] = useState(1);
   const [addUnit, setAddUnit] = useState('EACH');
+  const [addBrand, setAddBrand] = useState('');
+  const [addProductId, setAddProductId] = useState<string>();
+  const [addExpires, setAddExpires] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
   // True while the current add originated from a scan — so tapping Add reopens the scanner for
@@ -436,6 +439,8 @@ export function Inventory() {
     setAddSel(hit);
     setAddQuery(hit.name);
     setAddUnit(defaultUnitFor(hit.baseUnit));
+    setAddBrand('');
+    setAddProductId(undefined);
     setAddResults(undefined);
   }
 
@@ -454,22 +459,35 @@ export function Inventory() {
     try {
       const r = await api.get<{
         found: boolean;
+        productId?: string;
         item?: ItemHit;
-        source?: 'known' | 'provider' | 'openfoodfacts';
+        brand?: string | null;
+        size?: { quantity: number; unit: string } | null;
+        nutrition?: { calories?: number } | null;
+        descriptionSource?: string;
+        nutritionSource?: string | null;
         message?: string;
       }>(`/items/barcode/${upc}`);
       if (r.found && r.item) {
-        pickItem(r.item);
+        pickItem(r.item); // sets item, default unit, clears brand/product
         setFromScan(true);
-        setMsg(
-          `Scanned: ${r.item.name}${
-            r.source === 'openfoodfacts' ? ' (via Open Food Facts)' : ''
-          } — set the amount and tap Add.`,
-        );
+        setAddProductId(r.productId);
+        if (r.brand) setAddBrand(r.brand);
+        if (r.size) {
+          setAddQty(r.size.quantity);
+          setAddUnit(r.size.unit);
+        }
+        const bits = [
+          r.brand,
+          r.size ? `${r.size.quantity} ${r.size.unit.toLowerCase()}` : null,
+          r.nutrition?.calories != null ? `${Math.round(r.nutrition.calories)} cal/serving` : null,
+        ].filter(Boolean);
+        setMsg(`Scanned: ${[r.item.name, ...bits].join(' · ')} — check the amount and tap Add.`);
       } else {
         setAddSel(undefined);
         setAddQuery('');
         setFromScan(false);
+        setAddProductId(undefined);
         setMsg(r.message ?? `Barcode ${upc} isn’t in the database — type the item name to add it.`);
       }
     } catch (e) {
@@ -485,10 +503,20 @@ export function Inventory() {
     const chain = fromScan; // remember before we reset
     setMsg(undefined);
     try {
-      await api.post('/inventory', { canonicalItemId: addSel.id, quantity: addQty, unit: addUnit });
+      await api.post('/inventory', {
+        canonicalItemId: addSel.id,
+        productId: addProductId,
+        quantity: addQty,
+        unit: addUnit,
+        brand: addBrand.trim() || undefined,
+        expiresAt: addExpires || undefined,
+      });
       setAddSel(undefined);
       setAddQuery('');
       setAddQty(1);
+      setAddBrand('');
+      setAddProductId(undefined);
+      setAddExpires('');
       setFromScan(false);
       refresh();
       // Scanned item added -> jump straight back to the camera for the next one.
@@ -539,6 +567,8 @@ export function Inventory() {
               setAddQuery(e.target.value);
               setAddSel(undefined);
               setFromScan(false);
+              setAddBrand('');
+              setAddProductId(undefined);
             }}
           />
           <button
@@ -566,20 +596,39 @@ export function Inventory() {
           </div>
         )}
         {addSel && (
-          <div className="sheet-row add-amount-row">
-            <input
-              className="sheet-input"
-              type="number"
-              min={0}
-              step="any"
-              value={addQty}
-              onChange={(e) => setAddQty(Number(e.target.value))}
-            />
-            <UnitSelect value={addUnit} onChange={setAddUnit} />
-            <button className="btn btn-inline" onClick={addLot} disabled={addQty <= 0}>
-              Add
-            </button>
-          </div>
+          <>
+            <div className="sheet-row add-amount-row">
+              <input
+                className="sheet-input"
+                type="number"
+                min={0}
+                step="any"
+                value={addQty}
+                onChange={(e) => setAddQty(Number(e.target.value))}
+              />
+              <UnitSelect value={addUnit} onChange={setAddUnit} />
+              <button className="btn btn-inline" onClick={addLot} disabled={addQty <= 0}>
+                Add
+              </button>
+            </div>
+            <div className="sheet-row">
+              <input
+                className="sheet-input sheet-input-wide"
+                placeholder="brand (optional — e.g. Heinz)"
+                value={addBrand}
+                onChange={(e) => setAddBrand(e.target.value)}
+              />
+            </div>
+            <div className="sheet-row">
+              <label className="muted">expires</label>
+              <input
+                className="sheet-input"
+                type="date"
+                value={addExpires}
+                onChange={(e) => setAddExpires(e.target.value)}
+              />
+            </div>
+          </>
         )}
       </div>
 

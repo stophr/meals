@@ -200,6 +200,27 @@ export async function searchProducts(
   return (data.data ?? []).map(mapProduct);
 }
 
+/** Look up a single product by its UPC (for the local UPC corpus). locationId is optional but
+ * lets Kroger return the size/price for that store. Returns null when Kroger doesn't have it. */
+export async function getProductByUpc(
+  cfg: KrogerConfig,
+  token: string,
+  upc: string,
+  locationId?: string,
+): Promise<KrogerProduct | null> {
+  const params = new URLSearchParams({ 'filter.productId': upc.replace(/\D/g, '') });
+  if (locationId) params.set('filter.locationId', locationId);
+  const res = await fetch(`${apiBase(cfg)}/products?${params}`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Kroger HTTP ${res.status} on /products byUpc: ${await res.text().catch(() => '')}`);
+  const data = (await res.json()) as { data: RawProduct[] };
+  const hit = (data.data ?? [])[0];
+  return hit ? mapProduct(hit) : null;
+}
+
 /** Add items to the signed-in user's real Kroger/Fry's cart. */
 export async function addToCart(
   cfg: KrogerConfig,

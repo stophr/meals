@@ -141,6 +141,7 @@ export interface RecipeCoverage {
 // ---- Inventory ----
 export const inventoryCreateSchema = z.object({
   canonicalItemId: cuid,
+  productId: cuid.optional(), // the specific UPC container (from a scan)
   quantity: positive,
   unit: unitSchema,
   brand: z.string().optional(),

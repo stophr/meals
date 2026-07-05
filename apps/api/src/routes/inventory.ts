@@ -32,6 +32,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
       data: {
         householdId: household.id,
         canonicalItemId: data.canonicalItemId,
+        productId: data.productId,
         quantity: data.quantity.toString(),
         unit: data.unit,
         baseQuantity: toBaseQuantity(data.quantity, data.unit).baseQuantity.toString(),

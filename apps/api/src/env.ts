@@ -29,6 +29,11 @@ const envSchema = z.object({
   // New-portal (CE) apps: https://api-ce.kroger.com/v1
   KROGER_API_BASE: z.string().default('https://api.kroger.com/v1'),
 
+  // USDA FoodData Central (nutrition source). Free key: https://fdc.nal.usda.gov/api-key-signup.html
+  // DEMO_KEY works but is heavily rate-limited — set a real key in .env.
+  USDA_FDC_API_KEY: z.string().default('DEMO_KEY'),
+  USDA_FDC_API_BASE: z.string().default('https://api.nal.usda.gov/fdc/v1'),
+
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
 

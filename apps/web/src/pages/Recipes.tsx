@@ -27,6 +27,11 @@ interface RecipeRow {
   costCoverage?: number | null;
   promoIngredients?: number | null;
   cookTonightCost?: number | null;
+  nutrition?: {
+    perServing: Partial<Record<'calories' | 'proteinG' | 'carbsG' | 'sugarG' | 'fiberG' | 'fatG' | 'satFatG' | 'sodiumMg', number>>;
+    covered: number;
+    required: number;
+  } | null;
   ingredients: {
     id: string;
     freeText?: string | null;
@@ -88,6 +93,40 @@ function CoverageBadge({ c }: { c: RecipeCoverage }) {
       </span>
     );
   return null;
+}
+
+function NutritionPanel({ n }: { n: NonNullable<RecipeRow['nutrition']> }) {
+  const ps = n.perServing;
+  if (ps.calories == null && ps.proteinG == null && ps.carbsG == null && ps.fatG == null) return null;
+  const macro = (label: string, v?: number) =>
+    v == null ? null : (
+      <span className="nutri-item">
+        <b>{Math.round(v)}g</b> {label}
+      </span>
+    );
+  return (
+    <div className="nutri">
+      <div className="nutri-head">
+        Nutrition <span className="muted">per serving · {n.covered}/{n.required} ingredients</span>
+      </div>
+      <div className="nutri-row">
+        {ps.calories != null && (
+          <span className="nutri-item">
+            <b>{Math.round(ps.calories)}</b> cal
+          </span>
+        )}
+        {macro('protein', ps.proteinG)}
+        {macro('carbs', ps.carbsG)}
+        {macro('fat', ps.fatG)}
+        {ps.fiberG != null && macro('fiber', ps.fiberG)}
+        {ps.sodiumMg != null && (
+          <span className="nutri-item">
+            <b>{Math.round(ps.sodiumMg)}mg</b> sodium
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** Inline search to pick a replacement ingredient for a substitution. */
@@ -360,6 +399,7 @@ export function Recipes() {
             <span className="badge">{c.unlinkedCount} ingredient(s) unverified</span>
           )}
         </div>
+        {detail.nutrition && detail.nutrition.covered > 0 && <NutritionPanel n={detail.nutrition} />}
         {notice && <p className="notice">{notice}</p>}
         <div className="btn-row">
           <button className="btn" disabled={busyId === detail.id} onClick={() => cook(detail)}>

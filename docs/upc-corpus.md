@@ -1,0 +1,66 @@
+# Local UPC corpus, product sourcing & nutrition
+
+The pantry models **containers of ingredients**. Three layers:
+
+- **Ingredient** (`CanonicalItem`) — the store/brand-agnostic concept recipes reference. **Water**
+  is the one ingredient with no container: an `assumeStocked` item, metered (piped), never scanned.
+- **Product** (`Product`, new) — a store-agnostic **container keyed by UPC**: brand, description,
+  net size, serving size, servings-per-container, per-serving **nutrition**, image. This is the
+  "local corpus" we call from first. Links up to its ingredient (`canonicalItemId`).
+- **Pantry lot** (`InventoryLot`) — a physical container on the shelf: `productId` (the scanned
+  UPC), amount remaining, `expiresAt`, brand/location.
+
+Store **price** stays on `ProviderProduct` + `PriceObservation` (per provider), keyed by the same UPC.
+
+## Sourcing & precedence (independent per field-group)
+
+Each `Product` records **where each field-group came from and when** (`descriptionSource` /
+`nutritionSource` + timestamps, enum `KROGER | STORE | USDA | OFF | MANUAL`). Two independent
+precedence orders (in `apps/api/src/lib/productCorpus.ts`):
+
+| group | order | why |
+|-------|-------|-----|
+| description / brand / size | **Fry's/Kroger → other stores → Open Food Facts** | Fry's is authoritative for what's on the shelf |
+| nutrition (per serving) | **USDA FoodData Central → Open Food Facts** | Kroger's API doesn't return nutrition; USDA is authoritative, OFF fills gaps |
+
+**Write rule:** a field-group is overwritten only by an **equal-or-higher-priority** source, so
+Fry's is never downgraded by OFF, and a re-pull from the same source refreshes in place. `MANUAL`
+outranks everything (user edits are never clobbered).
+
+## Resolve flow (`resolveProduct(upc, householdId)`)
+
+1. **Local `Product`** by UPC. If it already has nutrition → return it, **no network** (re-scans are instant).
+2. Otherwise fetch in parallel: **Kroger** by UPC (the org's Fry's location + app token) and **OFF**
+   (description + nutriments); then **USDA** by UPC, else by name.
+3. Merge each field-group by precedence, upsert to the corpus, resolve/link the ingredient, set the
+   ingredient's `referenceProductId` (for recipe-nutrition fallback) and default base unit.
+
+Scanning stores the resolved `productId` on the pantry lot and prefills brand + size (+ expiry input).
+
+## Recipe nutrition — "per specific container/brand"
+
+Recipe nutrition uses the **exact product the household has stocked** for each ingredient (FIFO lot),
+falling back to that ingredient's `referenceProduct` when it isn't in the pantry. Amounts convert
+recipe base-units → servings via the product's serving size, bridging mass↔volume↔count with the
+item's density (`crossConvert`). Recipe detail returns `{ perServing, total, covered, required }`;
+the web shows a per-serving panel with a `covered/required` indicator.
+
+Consequence of this choice (vs generic per-ingredient): a recipe only shows nutrition for ingredients
+that have a linked product — i.e. that have been **scanned/stocked at least once**. Coverage grows as
+the corpus fills. (The rejected alternative would have used generic USDA-by-name profiles for every
+ingredient regardless of stock.)
+
+## Config / ops
+
+- **`USDA_FDC_API_KEY`** in `.env` (free key: https://fdc.nal.usda.gov/api-key-signup.html). Falls
+  back to the rate-limited `DEMO_KEY`.
+- Precedence lists live in code (`productCorpus.ts`) — easy to promote to a settings table/UI later.
+- The old `CanonicalItem.upcs[]` cache was replaced by `Product` (dropped in the migration); the few
+  previously-scanned UPCs re-enrich into the corpus on the next scan.
+
+## Deferred (see `feature-requests.md` #3)
+
+- **Brand preferencing** — learn/prefer the brands an org buys (optimizer + list builder).
+- **Feed the corpus from `syncPrices`** — the Kroger price sync should also upgrade `Product`
+  description/size to `KROGER` source (the "updates preferenced from Fry's" path, beyond scan-time).
+- **Pricing from parsed pack size**; per-lot nutrition/expiry surfaced in the pantry list.
