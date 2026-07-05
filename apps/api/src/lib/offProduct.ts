@@ -19,6 +19,7 @@ export interface OffProductData {
   name: string;
   brand: string | null;
   quantity: string | null; // pack size text, e.g. "500 ml"
+  imageUrl: string | null;
   nutrition: OffNutrition | null;
 }
 
@@ -27,6 +28,8 @@ interface OffProduct {
   product_name_en?: string;
   brands?: string;
   quantity?: string;
+  image_front_url?: string;
+  image_url?: string;
   serving_size?: string;
   serving_quantity?: number | string;
   nutrition_data_per?: string; // "serving" | "100g"
@@ -79,7 +82,7 @@ export async function lookupOpenFoodFacts(code: string): Promise<OffProductData 
   const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
     const fields =
-      'product_name,product_name_en,brands,quantity,serving_size,serving_quantity,nutrition_data_per,nutriments';
+      'product_name,product_name_en,brands,quantity,image_front_url,image_url,serving_size,serving_quantity,nutrition_data_per,nutriments';
     const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}?fields=${fields}`, {
       signal: ctrl.signal,
       headers: { 'User-Agent': 'Pantrezy/1.0 (grocery planner; self-hosted)' },
@@ -93,6 +96,7 @@ export async function lookupOpenFoodFacts(code: string): Promise<OffProductData 
       name,
       brand: (p?.brands || '').split(',')[0]?.trim() || null,
       quantity: p?.quantity?.trim() || null,
+      imageUrl: p?.image_front_url || p?.image_url || null,
       nutrition: p ? extractNutrition(p) : null,
     };
   } catch {

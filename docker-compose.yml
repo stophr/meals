@@ -38,6 +38,8 @@ services:
       KROGER_API_BASE: ${KROGER_API_BASE:-https://api.kroger.com/v1}
       USDA_FDC_API_KEY: ${USDA_FDC_API_KEY:-DEMO_KEY}
       USDA_FDC_API_BASE: ${USDA_FDC_API_BASE:-https://api.nal.usda.gov/fdc/v1}
+      UPCITEMDB_KEY: ${UPCITEMDB_KEY:-}
+      UPCITEMDB_API_BASE: ${UPCITEMDB_API_BASE:-https://api.upcitemdb.com/prod/v1}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OCR_MODEL: ${OCR_MODEL:-claude-sonnet-5}
       OCR_ESCALATION_MODEL: ${OCR_ESCALATION_MODEL:-claude-opus-4-8}

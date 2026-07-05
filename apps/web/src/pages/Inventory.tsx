@@ -58,6 +58,7 @@ interface Lot {
     baseUnit?: string | null;
     assumeStocked?: boolean;
   };
+  product?: { imageUrl?: string | null; description?: string | null; brand?: string | null } | null;
 }
 interface ItemHit {
   id: string;
@@ -389,6 +390,7 @@ export function Inventory() {
   const [addUnit, setAddUnit] = useState('EACH');
   const [addBrand, setAddBrand] = useState('');
   const [addProductId, setAddProductId] = useState<string>();
+  const [addImageUrl, setAddImageUrl] = useState<string>();
   const [addExpires, setAddExpires] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
@@ -441,6 +443,7 @@ export function Inventory() {
     setAddUnit(defaultUnitFor(hit.baseUnit));
     setAddBrand('');
     setAddProductId(undefined);
+    setAddImageUrl(undefined);
     setAddResults(undefined);
   }
 
@@ -462,6 +465,7 @@ export function Inventory() {
         productId?: string;
         item?: ItemHit;
         brand?: string | null;
+        imageUrl?: string | null;
         size?: { quantity: number; unit: string } | null;
         nutrition?: { calories?: number } | null;
         descriptionSource?: string;
@@ -469,9 +473,10 @@ export function Inventory() {
         message?: string;
       }>(`/items/barcode/${upc}`);
       if (r.found && r.item) {
-        pickItem(r.item); // sets item, default unit, clears brand/product
+        pickItem(r.item); // sets item, default unit, clears brand/product/image
         setFromScan(true);
         setAddProductId(r.productId);
+        setAddImageUrl(r.imageUrl ?? undefined);
         if (r.brand) setAddBrand(r.brand);
         if (r.size) {
           setAddQty(r.size.quantity);
@@ -488,6 +493,7 @@ export function Inventory() {
         setAddQuery('');
         setFromScan(false);
         setAddProductId(undefined);
+        setAddImageUrl(undefined);
         setMsg(r.message ?? `Barcode ${upc} isn’t in the database — type the item name to add it.`);
       }
     } catch (e) {
@@ -516,6 +522,7 @@ export function Inventory() {
       setAddQty(1);
       setAddBrand('');
       setAddProductId(undefined);
+      setAddImageUrl(undefined);
       setAddExpires('');
       setFromScan(false);
       refresh();
@@ -569,6 +576,7 @@ export function Inventory() {
               setFromScan(false);
               setAddBrand('');
               setAddProductId(undefined);
+              setAddImageUrl(undefined);
             }}
           />
           <button
@@ -597,6 +605,12 @@ export function Inventory() {
         )}
         {addSel && (
           <>
+            {addImageUrl && (
+              <div className="sheet-row">
+                <img className="scan-thumb" src={addImageUrl} alt="" />
+                <span className="muted">{addSel.name}</span>
+              </div>
+            )}
             <div className="sheet-row add-amount-row">
               <input
                 className="sheet-input"
@@ -649,6 +663,7 @@ export function Inventory() {
           <ul className="plan-entries queue-list pantry-list">
             {catLots.map((lot) => (
               <li key={lot.id}>
+                {lot.product?.imageUrl && <img className="pantry-thumb" src={lot.product.imageUrl} alt="" />}
                 <span className="plan-recipe">{lot.canonicalItem.name}</span>
                 {lot.brand && <span className="muted"> · {lot.brand}</span>}
                 {lot.location && <span className="muted"> · {lot.location}</span>}

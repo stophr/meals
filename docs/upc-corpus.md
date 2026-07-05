@@ -20,8 +20,12 @@ precedence orders (in `apps/api/src/lib/productCorpus.ts`):
 
 | group | order | why |
 |-------|-------|-----|
-| description / brand / size | **Fry's/Kroger → other stores → Open Food Facts** | Fry's is authoritative for what's on the shelf |
+| description / brand / size | **Fry's/Kroger → other stores → Open Food Facts → UPCitemdb** | Fry's is authoritative for the shelf; UPCitemdb is the last-resort long-tail source (great titles + images) but quota-limited, so it's only called when nothing else described the UPC |
 | nutrition (per serving) | **USDA FoodData Central → Open Food Facts** | Kroger's API doesn't return nutrition; USDA is authoritative, OFF fills gaps |
+
+**Images** travel with the description group: whichever source is available (Kroger, OFF, or
+UPCitemdb) supplies `Product.imageUrl`, backfilled onto the row when it has none. Shown as
+thumbnails in the pantry list and the scan-add card.
 
 **Write rule:** a field-group is overwritten only by an **equal-or-higher-priority** source, so
 Fry's is never downgraded by OFF, and a re-pull from the same source refreshes in place. `MANUAL`
@@ -54,6 +58,8 @@ ingredient regardless of stock.)
 
 - **`USDA_FDC_API_KEY`** in `.env` (free key: https://fdc.nal.usda.gov/api-key-signup.html). Falls
   back to the rate-limited `DEMO_KEY`.
+- **`UPCITEMDB_KEY`** in `.env` — empty uses the free trial endpoint (~100 lookups/day); set a paid
+  key for volume. Because it's last-resort-only, the trial quota stretches a long way.
 - Precedence lists live in code (`productCorpus.ts`) — easy to promote to a settings table/UI later.
 - The old `CanonicalItem.upcs[]` cache was replaced by `Product` (dropped in the migration); the few
   previously-scanned UPCs re-enrich into the corpus on the next scan.

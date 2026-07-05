@@ -10,3 +10,4 @@ export * from './pantry/extract.js';
 export * from './ordering/kroger.js';
 export * from './ordering/cartLinks.js';
 export * from './nutrition/usda.js';
+export * from './products/upcitemdb.js';

@@ -19,7 +19,10 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const household = await getHousehold(req);
     return prisma.inventoryLot.findMany({
       where: { householdId: household.id },
-      include: { canonicalItem: true },
+      include: {
+        canonicalItem: true,
+        product: { select: { imageUrl: true, description: true, brand: true } },
+      },
       orderBy: [{ expiresAt: 'asc' }, { purchasedAt: 'asc' }],
     });
   });

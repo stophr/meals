@@ -8,14 +8,21 @@
 
 import { prisma } from '@meals/db';
 import { toBaseQuantity, dimensionOf } from '@meals/core';
-import { getProductByUpc, lookupUsdaByUpc, lookupUsdaByName, type KrogerProduct } from '@meals/ingestion';
+import {
+  getProductByUpc,
+  lookupUsdaByUpc,
+  lookupUsdaByName,
+  lookupUpcItemDb,
+  type KrogerProduct,
+  type UpcItemDbProduct,
+} from '@meals/ingestion';
 import { krogerConfig, getAppToken, krogerLocationId } from './kroger.js';
 import { resolveCanonicalItem } from './resolveItem.js';
 import { lookupOpenFoodFacts } from './offProduct.js';
 import { cleanOffName, parseQuantityText, unitWord, BASE_UNIT_FOR } from './upcUtil.js';
 import { env } from '../env.js';
 
-const DESC_RANK: Record<string, number> = { MANUAL: 4, KROGER: 3, STORE: 2, OFF: 1 };
+const DESC_RANK: Record<string, number> = { MANUAL: 5, KROGER: 4, STORE: 3, OFF: 2, UPCITEMDB: 1 };
 const NUTR_RANK: Record<string, number> = { MANUAL: 4, USDA: 3, OFF: 1 };
 
 interface Nutr {
@@ -39,6 +46,7 @@ export interface ResolvedProduct {
   item?: { id: string; name: string; category: string | null; baseUnit: string | null };
   brand?: string | null;
   description?: string | null;
+  imageUrl?: string | null;
   size?: { quantity: number; unit: string } | null;
   nutrition?: Nutr | null;
   descriptionSource?: string;
@@ -141,6 +149,7 @@ async function shape(p: NonNullable<ProductRow>): Promise<ResolvedProduct> {
     item: item ?? undefined,
     brand: p.brand,
     description: p.description,
+    imageUrl: p.imageUrl,
     size: p.packSize != null && p.packUnit ? { quantity: Number(p.packSize), unit: p.packUnit } : null,
     nutrition: nutritionOut(p),
     descriptionSource: p.descriptionSource,
@@ -175,17 +184,33 @@ export async function resolveProduct(upc: string, householdId: string): Promise<
     tryKroger(upc, householdId),
     lookupOpenFoodFacts(upc).catch(() => null),
   ]);
-  if (!existing && !kro && !off) return { found: false, code: upc };
 
-  const nameForUsda = kro?.description ?? existing?.description ?? off?.name ?? '';
+  // Last resort: only hit UPCitemdb (great titles + images, but quota-limited) when neither
+  // Fry's nor OFF described the product.
+  let upcdb: UpcItemDbProduct | null = null;
+  if (!kro && !off) {
+    upcdb = await lookupUpcItemDb(
+      { key: env.UPCITEMDB_KEY || undefined, baseUrl: env.UPCITEMDB_API_BASE },
+      upc,
+    ).catch(() => null);
+  }
+  if (!existing && !kro && !off && !upcdb) return { found: false, code: upc };
+
+  const nameForUsda = kro?.description ?? existing?.description ?? off?.name ?? upcdb?.description ?? '';
   const usda = await fetchUsda(upc, nameForUsda);
 
-  // ---- description candidate (Kroger > OFF) ----
-  const descCand = kro
-    ? { source: 'KROGER', description: cleanOffName(kro.description), brand: kro.brand ?? null, sizeText: kro.size ?? null }
-    : off
-      ? { source: 'OFF', description: cleanOffName(off.name), brand: off.brand, sizeText: off.quantity }
-      : null;
+  // ---- description candidate (Kroger > OFF > UPCitemdb) ----
+  const descCand: { source: string; description: string; brand: string | null; sizeText: string | null; imageUrl: string | null } | null =
+    kro
+      ? { source: 'KROGER', description: cleanOffName(kro.description), brand: kro.brand ?? null, sizeText: kro.size ?? null, imageUrl: kro.imageUrl ?? null }
+      : off
+        ? { source: 'OFF', description: cleanOffName(off.name), brand: off.brand, sizeText: off.quantity, imageUrl: off.imageUrl }
+        : upcdb
+          ? { source: 'UPCITEMDB', description: cleanOffName(upcdb.description), brand: upcdb.brand, sizeText: upcdb.sizeText, imageUrl: upcdb.imageUrl }
+          : null;
+
+  // Image: take from the chosen description source, else whatever OFF/UPCitemdb gave us.
+  const image = descCand?.imageUrl ?? off?.imageUrl ?? upcdb?.imageUrl ?? null;
 
   // ---- nutrition candidate (USDA > OFF) ----
   const nutrCand: { n: Nutr; source: string } | null = usda
@@ -218,6 +243,9 @@ export async function resolveProduct(upc: string, householdId: string): Promise<
       nutritionUpdatedAt: new Date(),
     });
   }
+
+  // Image is low-stakes: set it on create, or backfill when the corpus row has none yet.
+  if (image && (!existing || !existing.imageUrl)) write.imageUrl = image;
 
   const resolvedItem = await resolveCanonicalItem(description);
 

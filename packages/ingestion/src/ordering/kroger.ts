@@ -37,6 +37,7 @@ export interface KrogerProduct {
   regular?: number;
   promo?: number; // 0/undefined when not on promo
   aisle?: string;
+  imageUrl?: string;
 }
 
 export interface KrogerTokens {
@@ -162,6 +163,15 @@ interface RawProduct {
     price?: { regular?: number; promo?: number };
   }[];
   aisleLocations?: { description?: string }[];
+  images?: { perspective?: string; featured?: boolean; sizes?: { size?: string; url?: string }[] }[];
+}
+
+function pickImage(p: RawProduct): string | undefined {
+  const imgs = p.images ?? [];
+  const front = imgs.find((i) => i.perspective === 'front' || i.featured) ?? imgs[0];
+  const sizes = front?.sizes ?? [];
+  const chosen = sizes.find((s) => s.size === 'large') ?? sizes.find((s) => s.size === 'medium') ?? sizes[0];
+  return chosen?.url;
 }
 
 /** Pure mapper (exported for tests). */
@@ -177,6 +187,7 @@ export function mapProduct(p: RawProduct): KrogerProduct {
     regular: item?.price?.regular,
     promo: promo && promo > 0 ? promo : undefined,
     aisle: p.aisleLocations?.[0]?.description,
+    imageUrl: pickImage(p),
   };
 }
 

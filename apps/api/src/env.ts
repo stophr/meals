@@ -34,6 +34,10 @@ const envSchema = z.object({
   USDA_FDC_API_KEY: z.string().default('DEMO_KEY'),
   USDA_FDC_API_BASE: z.string().default('https://api.nal.usda.gov/fdc/v1'),
 
+  // UPCitemdb (last-resort description + images). Empty key = free trial endpoint (~100/day).
+  UPCITEMDB_KEY: z.string().default(''),
+  UPCITEMDB_API_BASE: z.string().default('https://api.upcitemdb.com/prod/v1'),
+
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
 

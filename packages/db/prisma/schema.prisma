@@ -67,6 +67,7 @@ enum ProductSource {
   STORE // another store integration
   USDA // USDA FoodData Central — authoritative for nutrition
   OFF // Open Food Facts
+  UPCITEMDB // UPCitemdb — last-resort description + images
   MANUAL // user-entered / legacy
 }
 
