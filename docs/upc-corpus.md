@@ -67,6 +67,12 @@ qwen2.5vl) to read the **printed PLU + name** off the sticker. It returns a `cod
 a printed UPC) that feeds the normal resolve pipeline. Verified reading `4012`→Navel and
 `3283`→Honeycrisp off real stickers. (Barcode auto-decode still runs continuously for packaged
 UPCs; tap is the produce fallback.)
+
+The small local model (qwen2.5vl) occasionally misreads a digit (4012→4011 = Navel→Bananas), so:
+(1) the endpoint cross-checks the read **name against the PLU's commodity** and, on a mismatch,
+returns "type the PLU" instead of the wrong produce; (2) if `ANTHROPIC_API_KEY` is set it uses
+**Claude vision** (`extractProduceLabelClaude`, `OCR_MODEL`) for accurate digit reading. The web
+downscales to 1280px first — full-res crashes the local model runner.
 - `Product.servingDimension` records whether a serving is mass/volume/count, so recipe math
   converts correctly (e.g. a USDA 100 g serving vs a recipe's "2 bananas" via the item's density).
 

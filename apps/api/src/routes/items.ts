@@ -11,8 +11,27 @@ import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
 import { resolveProduct, resolvePluProduct, mapGtinToPlu } from '../lib/productCorpus.js';
-import { extractPlu, extractProduceLabel } from '@meals/ingestion';
+import { extractPlu, resolvePlu, extractProduceLabel, extractProduceLabelClaude } from '@meals/ingestion';
 import { env } from '../env.js';
+
+// Do a produce commodity name (from a PLU) and a vision-read label name refer to the same thing?
+// Used to catch digit misreads (4012→4011 turns "Navel" into "Bananas").
+const LABEL_STOP = new Set(['large', 'small', 'medium', 'organic', 'fresh', 'each', 'with', 'baby', 'mini']);
+function labelSharesWord(a: string, b: string): boolean {
+  const words = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z ]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !LABEL_STOP.has(w))
+        .map((w) => w.replace(/s$/, '')),
+    );
+  const A = words(a);
+  const B = words(b);
+  for (const w of A) if (B.has(w)) return true;
+  return false;
+}
 
 export async function itemRoutes(app: FastifyInstance) {
   // Resolve a scanned/typed code against the local corpus. A produce PLU (typed 4-5 digits, or a
@@ -59,23 +78,43 @@ export async function itemRoutes(app: FastifyInstance) {
       reply.code(400);
       return { code: null, message: 'No image provided.' };
     }
+    const mt = mediaType ?? 'image/jpeg';
     let label;
     try {
-      label = await extractProduceLabel(imageBase64, mediaType ?? 'image/jpeg', {
-        baseUrl: env.OCR_LOCAL_BASE_URL,
-        model: env.OCR_LOCAL_MODEL,
-        apiKey: env.OCR_LOCAL_API_KEY || undefined,
-      });
+      // Claude (accurate digit reading) when a key is set; else the local vision model.
+      label = env.ANTHROPIC_API_KEY
+        ? await extractProduceLabelClaude(imageBase64, mt, { apiKey: env.ANTHROPIC_API_KEY, model: env.OCR_MODEL })
+        : await extractProduceLabel(imageBase64, mt, {
+            baseUrl: env.OCR_LOCAL_BASE_URL,
+            model: env.OCR_LOCAL_MODEL,
+            apiKey: env.OCR_LOCAL_API_KEY || undefined,
+          });
     } catch (e) {
       reply.code(502);
       return { code: null, message: `Couldn’t read the label: ${e instanceof Error ? e.message : String(e)}` };
     }
-    // Feed the normal resolve pipeline: PLU (with organic 9-prefix) preferred, else a printed UPC.
-    const code = label.plu
+
+    const pluCode = label.plu
       ? label.organic && label.plu.length === 4
         ? `9${label.plu}`
         : label.plu
-      : label.upc;
+      : null;
+
+    // Sanity: if we read both a PLU and a name and they disagree (a misread digit), don't trust
+    // the PLU — ask the user to type it rather than silently adding the wrong produce.
+    if (pluCode && label.name) {
+      const commodity = resolvePlu(pluCode)?.commodity ?? '';
+      if (commodity && !labelSharesWord(commodity, label.name)) {
+        return {
+          code: null,
+          ...label,
+          mismatch: true,
+          message: `Read “${label.name}” but the PLU (${label.plu}) didn’t match it — type the 4-digit PLU from the sticker.`,
+        };
+      }
+    }
+
+    const code = pluCode ?? label.upc;
     return { code: code ?? null, ...label };
   });
 
