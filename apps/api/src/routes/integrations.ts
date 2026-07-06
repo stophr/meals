@@ -154,8 +154,8 @@ export async function integrationRoutes(app: FastifyInstance) {
         expiresAt: tokens.expiresAt,
       },
     });
-    // Back to the app (the web proxy serves the SPA at /).
-    reply.redirect('/?kroger=linked');
+    // Back to the Settings panel (relative → resolves to whatever host served the callback).
+    reply.redirect('/settings?kroger=linked');
   });
 
   // Sync real prices for a shopping list's items (or explicit itemIds) at a linked provider.
