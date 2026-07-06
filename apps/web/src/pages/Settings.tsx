@@ -505,6 +505,34 @@ function KrogerPanel() {
     }
   }
 
+  async function unlinkAccount() {
+    if (!window.confirm('Unlink your Fry’s account? The app will no longer push to your cart.')) return;
+    setBusy(true);
+    try {
+      await api.del('/integrations/kroger/link');
+      setMsg('Fry’s account unlinked.');
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnectStore(id: string, name: string) {
+    if (!window.confirm(`Disconnect ${name}? Its products and prices for this org are removed.`)) return;
+    setBusy(true);
+    try {
+      await api.del(`/providers/${id}`);
+      setMsg(`Disconnected ${name}.`);
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!status) return null;
   return (
     <div className="card add-card">
@@ -514,9 +542,16 @@ function KrogerPanel() {
       ) : (
         <>
           {status.linkedProviders.length > 0 ? (
-            <div className="card-sub">
-              Connected: <strong>{status.linkedProviders.map((p) => p.name).join(', ')}</strong>
-            </div>
+            status.linkedProviders.map((p) => (
+              <div key={p.id} className="sheet-row">
+                <span>
+                  Connected: <strong>{p.name}</strong>
+                </span>
+                <button className="chip" onClick={() => disconnectStore(p.id, p.name)} disabled={busy}>
+                  disconnect
+                </button>
+              </div>
+            ))
           ) : (
             <div className="card-sub muted">No store connected — find your closest Fry’s below.</div>
           )}
@@ -548,7 +583,12 @@ function KrogerPanel() {
 
           <div className="sheet-row" style={{ marginTop: 8, alignItems: 'center' }}>
             {status.cartAuthorized ? (
-              <span className="badge badge-ok">✓ Fry’s account linked</span>
+              <>
+                <span className="badge badge-ok">✓ Fry’s account linked</span>
+                <button className="btn-link" onClick={unlinkAccount} disabled={busy}>
+                  unlink
+                </button>
+              </>
             ) : (
               <button
                 className="btn btn-inline"

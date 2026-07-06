@@ -114,6 +114,14 @@ export async function integrationRoutes(app: FastifyInstance) {
     });
   });
 
+  // Disconnect the Fry's account: drop the stored cart-authorization token. (The user can also
+  // revoke the app entirely from their Kroger account's connected-apps settings.)
+  app.delete('/integrations/kroger/link', async (req, reply) => {
+    const household = await getHousehold(req);
+    await prisma.integrationToken.deleteMany({ where: { householdId: household.id, kind: 'kroger' } });
+    reply.code(204);
+  });
+
   // OAuth: send the user to the Fry's/Kroger login to authorize cart pushes.
   app.get('/integrations/kroger/authorize', async (_req, reply) => {
     const cfg = krogerConfig();
