@@ -12,6 +12,7 @@ import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
 import { resolveProduct, resolvePluProduct, mapGtinToPlu } from '../lib/productCorpus.js';
 import { extractPlu, resolvePlu, extractProduceLabel, extractProduceLabelClaude } from '@meals/ingestion';
+import { readProduceLabelPaddle } from '../lib/produceOcr.js';
 import { env } from '../env.js';
 
 // Do a produce commodity name (from a PLU) and a vision-read label name refer to the same thing?
@@ -79,19 +80,32 @@ export async function itemRoutes(app: FastifyInstance) {
       return { code: null, message: 'No image provided.' };
     }
     const mt = mediaType ?? 'image/jpeg';
-    let label;
+    let label: { plu: string | null; upc: string | null; name: string | null; organic: boolean } | null = null;
+    let via = 'paddleocr';
+
+    // 1) PaddleOCR + IFPS table — fast, precise on digits, cross-checks the PLU against the name.
     try {
-      // Claude (accurate digit reading) when a key is set; else the local vision model.
-      label = env.ANTHROPIC_API_KEY
-        ? await extractProduceLabelClaude(imageBase64, mt, { apiKey: env.ANTHROPIC_API_KEY, model: env.OCR_MODEL })
-        : await extractProduceLabel(imageBase64, mt, {
-            baseUrl: env.OCR_LOCAL_BASE_URL,
-            model: env.OCR_LOCAL_MODEL,
-            apiKey: env.OCR_LOCAL_API_KEY || undefined,
-          });
-    } catch (e) {
-      reply.code(502);
-      return { code: null, message: `Couldn’t read the label: ${e instanceof Error ? e.message : String(e)}` };
+      const p = await readProduceLabelPaddle(imageBase64);
+      if (p?.plu) label = p;
+    } catch {
+      /* sidecar down or no PLU — fall back to the vision LLM */
+    }
+
+    // 2) Vision LLM fallback (Claude when a key is set, else the local model).
+    if (!label) {
+      via = env.ANTHROPIC_API_KEY ? 'claude' : 'local-vlm';
+      try {
+        label = env.ANTHROPIC_API_KEY
+          ? await extractProduceLabelClaude(imageBase64, mt, { apiKey: env.ANTHROPIC_API_KEY, model: env.OCR_MODEL })
+          : await extractProduceLabel(imageBase64, mt, {
+              baseUrl: env.OCR_LOCAL_BASE_URL,
+              model: env.OCR_LOCAL_MODEL,
+              apiKey: env.OCR_LOCAL_API_KEY || undefined,
+            });
+      } catch (e) {
+        reply.code(502);
+        return { code: null, message: `Couldn’t read the label: ${e instanceof Error ? e.message : String(e)}` };
+      }
     }
 
     const pluCode = label.plu
@@ -108,6 +122,7 @@ export async function itemRoutes(app: FastifyInstance) {
         return {
           code: null,
           ...label,
+          via,
           mismatch: true,
           message: `Read “${label.name}” but the PLU (${label.plu}) didn’t match it — type the 4-digit PLU from the sticker.`,
         };
@@ -115,7 +130,7 @@ export async function itemRoutes(app: FastifyInstance) {
     }
 
     const code = pluCode ?? label.upc;
-    return { code: code ?? null, ...label };
+    return { code: code ?? null, ...label, via };
   });
 
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface

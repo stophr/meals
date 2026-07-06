@@ -38,6 +38,9 @@ const envSchema = z.object({
   UPCITEMDB_KEY: z.string().default(''),
   UPCITEMDB_API_BASE: z.string().default('https://api.upcitemdb.com/prod/v1'),
 
+  // PaddleOCR (RapidOCR) sidecar for reading produce-sticker text -> PLU.
+  PADDLE_OCR_URL: z.string().default('http://paddleocr:8000'),
+
   STORAGE_DIR: z.string().default('./storage'),
   NODE_ENV: z.string().default('development'),
 

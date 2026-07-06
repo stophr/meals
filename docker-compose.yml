@@ -43,6 +43,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OCR_MODEL: ${OCR_MODEL:-claude-sonnet-5}
       OCR_ESCALATION_MODEL: ${OCR_ESCALATION_MODEL:-claude-opus-4-8}
+      # PaddleOCR (RapidOCR) sidecar — reads produce-sticker text for the PLU.
+      PADDLE_OCR_URL: ${PADDLE_OCR_URL:-http://paddleocr:8000}
       # Cloudflare Access: set both to log users in as their authenticated email.
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
@@ -58,6 +60,13 @@ services:
       - '${API_HOST_PORT:-3001}:3001'
     volumes:
       - storage:/repo/apps/api/storage
+
+  paddleocr:
+    build:
+      context: ./services/paddleocr
+    restart: unless-stopped
+    ports:
+      - '${PADDLE_OCR_PORT:-8078}:8000'
 
   web:
     build:

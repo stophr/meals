@@ -60,19 +60,24 @@ genuine product UPCs are never hijacked.
   entries (so "Bananas" → raw 89 kcal, not dehydrated 346).
 - It's set as the ingredient's `referenceProduct`, so recipes using that produce get nutrition.
 
-**Tap-to-read (vision) — the reliable produce path.** Those micro DataBars decode poorly in a
-phone browser. So in the scanner, **tapping the screen** captures the frame, downscales it, and
-POSTs to `/items/scan-image`, which runs the local vision LLM (`extractProduceLabel`,
-qwen2.5vl) to read the **printed PLU + name** off the sticker. It returns a `code` (the PLU, else
-a printed UPC) that feeds the normal resolve pipeline. Verified reading `4012`→Navel and
-`3283`→Honeycrisp off real stickers. (Barcode auto-decode still runs continuously for packaged
-UPCs; tap is the produce fallback.)
+**Tap-to-read — the reliable produce path.** Those micro DataBars decode poorly in a phone
+browser. So in the scanner, **tapping the screen** captures the frame, downscales it (1280px), and
+POSTs to `/items/scan-image`, which reads the **printed PLU + name** off the sticker and returns a
+`code` (the PLU, else a printed UPC) that feeds the normal resolve pipeline. Verified `4012`→Navel,
+`3283`→Honeycrisp on real stickers, `via: paddleocr`, <1s. (Barcode auto-decode still runs
+continuously for packaged UPCs; tap is the produce path.)
 
-The small local model (qwen2.5vl) occasionally misreads a digit (4012→4011 = Navel→Bananas), so:
-(1) the endpoint cross-checks the read **name against the PLU's commodity** and, on a mismatch,
-returns "type the PLU" instead of the wrong produce; (2) if `ANTHROPIC_API_KEY` is set it uses
-**Claude vision** (`extractProduceLabelClaude`, `OCR_MODEL`) for accurate digit reading. The web
-downscales to 1280px first — full-res crashes the local model runner.
+**Reader tiers (`/items/scan-image`), in order:**
+1. **PaddleOCR sidecar (default)** — `services/paddleocr` (RapidOCR / PP-OCR ONNX, CPU, no
+   paddlepaddle). `lib/produceOcr.ts` gets the text lines, then picks the **4-5 digit token that
+   is a real IFPS PLU AND whose commodity matches other printed text** (so a misread "4011" can't
+   win on a "NAVEL" sticker). Fast (~0.5s) and precise on digits. Config: `PADDLE_OCR_URL`.
+2. **Claude vision** — used if PaddleOCR finds no PLU and `ANTHROPIC_API_KEY` is set (`OCR_MODEL`).
+3. **Local vision LLM** (`qwen2.5vl`, `extractProduceLabel`) — final fallback.
+
+Benchmarks (RTX 4060 Ti, real stickers): PaddleOCR ~0.5s; qwen2.5vl:3b 3-4s (accurate on clean
+frames, misreads on bad ones); qwen3-vl 4b/8b 5-19s (reasoning — too slow). A name↔PLU consistency
+guard on the LLM paths turns a misread into "type the PLU" instead of the wrong item.
 - `Product.servingDimension` records whether a serving is mass/volume/count, so recipe math
   converts correctly (e.g. a USDA 100 g serving vs a recipe's "2 bananas" via the item's density).
 
