@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { api } from '../lib/api.js';
 
 async function loadReader() {
   const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
@@ -58,6 +59,7 @@ export function BarcodeScanner({
   const [error, setError] = useState<string>();
   const [tapMsg, setTapMsg] = useState<string>();
   const [manual, setManual] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
   const [debug, setDebug] = useState(false);
   debugRef.current = debug;
   const [, forceRender] = useState(0);
@@ -154,13 +156,45 @@ export function BarcodeScanner({
     };
   }, []);
 
-  function onTap() {
-    if (doneRef.current) return;
-    if (!videoRef.current?.videoWidth) {
+  async function onTap() {
+    if (doneRef.current || analyzing) return;
+    const video = videoRef.current;
+    if (!video?.videoWidth) {
       setTapMsg('Camera still starting — give it a second, then tap again.');
       return;
     }
-    if (!decodeFrame()) setTapMsg('No barcode read — fill the box with the barcode and tap again.');
+    // 1) Quick local decode — instant for a normal barcode already in frame.
+    if (decodeFrame()) return;
+    // 2) Produce sticker: capture the frame and let the server vision-read the printed PLU/name.
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 1280 / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const base64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1] ?? '';
+    setAnalyzing(true);
+    setTapMsg('Reading the label…');
+    try {
+      const r = await api.post<{ code: string | null; name?: string | null; plu?: string | null; message?: string }>(
+        '/items/scan-image',
+        { imageBase64: base64, mediaType: 'image/jpeg' },
+      );
+      if (r.code) {
+        finish(r.code);
+        return;
+      }
+      setTapMsg(
+        r.name
+          ? `Read “${r.name}”${r.plu ? ` (PLU ${r.plu})` : ''} but couldn’t match it — type the PLU below.`
+          : (r.message ?? 'Couldn’t read a code — type the PLU below.'),
+      );
+    } catch (e) {
+      setTapMsg(e instanceof Error ? e.message : 'Analysis failed — type the PLU below.');
+    } finally {
+      setAnalyzing(false);
+    }
   }
 
   function submitManual(e: FormEvent) {
@@ -209,7 +243,7 @@ export function BarcodeScanner({
           <p className="scanner-hint">
             {status === 'starting'
               ? 'Starting camera…'
-              : (tapMsg ?? 'Center the barcode — it scans automatically, or tap the screen to scan')}
+              : (tapMsg ?? 'Barcodes scan automatically. For a produce sticker, tap the screen to read the PLU.')}
           </p>
         </button>
       )}

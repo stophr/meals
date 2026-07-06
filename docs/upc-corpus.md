@@ -59,6 +59,14 @@ genuine product UPCs are never hijacked.
   so USDA is exactly right. The by-name picker prefers the *raw/whole* form and avoids processed
   entries (so "Bananas" → raw 89 kcal, not dehydrated 346).
 - It's set as the ingredient's `referenceProduct`, so recipes using that produce get nutrition.
+
+**Tap-to-read (vision) — the reliable produce path.** Those micro DataBars decode poorly in a
+phone browser. So in the scanner, **tapping the screen** captures the frame, downscales it, and
+POSTs to `/items/scan-image`, which runs the local vision LLM (`extractProduceLabel`,
+qwen2.5vl) to read the **printed PLU + name** off the sticker. It returns a `code` (the PLU, else
+a printed UPC) that feeds the normal resolve pipeline. Verified reading `4012`→Navel and
+`3283`→Honeycrisp off real stickers. (Barcode auto-decode still runs continuously for packaged
+UPCs; tap is the produce fallback.)
 - `Product.servingDimension` records whether a serving is mass/volume/count, so recipe math
   converts correctly (e.g. a USDA 100 g serving vs a recipe's "2 bananas" via the item's density).
 

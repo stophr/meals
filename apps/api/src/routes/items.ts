@@ -11,7 +11,8 @@ import { getHousehold } from '../lib/household.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { normalizeUpc } from '../lib/upcUtil.js';
 import { resolveProduct, resolvePluProduct, mapGtinToPlu } from '../lib/productCorpus.js';
-import { extractPlu } from '@meals/ingestion';
+import { extractPlu, extractProduceLabel } from '@meals/ingestion';
+import { env } from '../env.js';
 
 export async function itemRoutes(app: FastifyInstance) {
   // Resolve a scanned/typed code against the local corpus. A produce PLU (typed 4-5 digits, or a
@@ -46,6 +47,36 @@ export async function itemRoutes(app: FastifyInstance) {
       return { found: false, message: 'Enter the 4–5 digit PLU from the sticker.' };
     }
     return mapGtinToPlu(g, pluDigits);
+  });
+
+  // Read a captured camera frame with a vision LLM (for produce stickers whose tiny DataBar won't
+  // decode in-browser — the printed PLU/name reads fine). Returns a `code` (PLU preferred, else a
+  // printed UPC) to feed the normal barcode-resolve pipeline, plus what was read.
+  app.post('/items/scan-image', async (req, reply) => {
+    await getHousehold(req);
+    const { imageBase64, mediaType } = (req.body ?? {}) as { imageBase64?: string; mediaType?: string };
+    if (!imageBase64) {
+      reply.code(400);
+      return { code: null, message: 'No image provided.' };
+    }
+    let label;
+    try {
+      label = await extractProduceLabel(imageBase64, mediaType ?? 'image/jpeg', {
+        baseUrl: env.OCR_LOCAL_BASE_URL,
+        model: env.OCR_LOCAL_MODEL,
+        apiKey: env.OCR_LOCAL_API_KEY || undefined,
+      });
+    } catch (e) {
+      reply.code(502);
+      return { code: null, message: `Couldn’t read the label: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    // Feed the normal resolve pipeline: PLU (with organic 9-prefix) preferred, else a printed UPC.
+    const code = label.plu
+      ? label.organic && label.plu.length === 4
+        ? `9${label.plu}`
+        : label.plu
+      : label.upc;
+    return { code: code ?? null, ...label };
   });
 
   // Catalog autocomplete / list. Ranked so an exact/prefix match and popular items surface

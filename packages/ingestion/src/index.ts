@@ -7,6 +7,7 @@ export * from './recipes/foodcom.js';
 export * from './recipes/epicurious.js';
 export * from './llm/chat.js';
 export * from './pantry/extract.js';
+export * from './pantry/produceLabel.js';
 export * from './ordering/kroger.js';
 export * from './ordering/cartLinks.js';
 export * from './nutrition/usda.js';
