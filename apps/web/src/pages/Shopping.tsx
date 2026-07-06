@@ -3,6 +3,7 @@ import { formatImperial, dimensionOf } from '@meals/shared';
 import type { Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
+import { BarcodeScanner } from '../components/BarcodeScanner.js';
 
 interface ListRow {
   id: string;
@@ -46,6 +47,8 @@ interface ItemWithOptions {
   unit: string;
   mode: 'total' | 'unit';
   chosenProductId: string | null;
+  preferredBrand: string | null;
+  preferredBrandUnavailable: boolean;
   options: ItemOption[];
 }
 interface BuildStore {
@@ -302,6 +305,7 @@ export function Shopping() {
   const [build, setBuild] = useState<BuildResult>();
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState<string>();
+  const [scanItemId, setScanItemId] = useState<string>();
   const [priceMsg, setPriceMsg] = useState<string>();
   const [newItem, setNewItem] = useState('');
 
@@ -362,14 +366,28 @@ export function Shopping() {
     }
   }
 
+  // Choosing an option substitutes the product AND remembers the brand as the org's preference.
   async function chooseOption(itemId: string, o: ItemOption) {
     if (!selected) return;
-    await api.patch(`/shopping-lists/${selected}/items/${itemId}`, {
-      assignedProviderId: o.providerId,
-      chosenProductId: o.productId,
-    });
+    await api.post(`/shopping-lists/${selected}/items/${itemId}/substitute`, { productId: o.productId });
     await loadOptions(selected);
     setBuild(undefined);
+  }
+
+  async function substituteByScan(itemId: string, code: string) {
+    setScanItemId(undefined);
+    if (!selected) return;
+    try {
+      const r = await api.post<{ updated: boolean; brand?: string | null; message?: string }>(
+        `/shopping-lists/${selected}/items/${itemId}/substitute`,
+        { upc: code.replace(/\D/g, '') },
+      );
+      setPriceMsg(r.message ?? (r.updated ? `Swapped to ${r.brand ?? 'that product'} — saved as your preference.` : 'Couldn’t match that scan.'));
+      await loadOptions(selected);
+      setBuild(undefined);
+    } catch (e) {
+      setPriceMsg(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function buildLists() {
@@ -571,12 +589,17 @@ export function Shopping() {
                         {formatImperial(Number(it.quantityNeeded), dimensionOf(it.unit as Unit))}
                       </div>
                     </div>
-                    <button
-                      className="btn-link"
-                      onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
-                    >
-                      {capturing === it.id ? 'close' : '💲 check price'}
-                    </button>
+                    <div>
+                      <button className="btn-link" onClick={() => setScanItemId(it.id)} title="Scan a product to swap">
+                        📷 swap
+                      </button>{' '}
+                      <button
+                        className="btn-link"
+                        onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
+                      >
+                        {capturing === it.id ? 'close' : '💲 price'}
+                      </button>
+                    </div>
                   </div>
 
                   {chosen ? (
@@ -588,7 +611,16 @@ export function Shopping() {
                       <span className="muted">{unitPriceLabel(chosen, it.unit)}</span>
                     </div>
                   ) : (
-                    <div className="card-sub muted">No price yet — 💲 check price</div>
+                    <div className="card-sub muted">No price yet — 💲 price</div>
+                  )}
+
+                  {opt?.preferredBrand && (
+                    <div className="card-sub">
+                      ⭐ preferred: <strong>{opt.preferredBrand}</strong>
+                      {opt.preferredBrandUnavailable && (
+                        <span className="badge badge-part"> not stocked — using cheapest</span>
+                      )}
+                    </div>
                   )}
 
                   {opt && opt.options.length > 1 && (
@@ -643,6 +675,13 @@ export function Shopping() {
             })}
           </ul>
         </div>
+      )}
+
+      {scanItemId && (
+        <BarcodeScanner
+          onDetected={(code) => substituteByScan(scanItemId, code)}
+          onClose={() => setScanItemId(undefined)}
+        />
       )}
     </section>
   );

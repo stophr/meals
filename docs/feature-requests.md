@@ -6,7 +6,7 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 |---|---------|------|--------|--------|---------------|
 | 1 | "Suggested" recipes — household-taste recommendations at top of Recipes | beta tester | **shipped** (2026-07-04) | S–M | no |
 | 2 | Scan a UPC with phone camera to add a pantry item | beta tester | **shipped + device-verified** (2026-07-05) | M | `CanonicalItem.upcs[]` |
-| 3 | Brand preferencing + richer scanned product data (brand, pack size, better names, pricing) | beta tester | brand-pref still open; corpus+nutrition **shipped** (2026-07-05) | M–L | `Product`, `ProductSource` |
+| 3 | Brand preferencing + richer scanned product data (brand, pack size, better names, pricing) | beta tester | **shipped** (2026-07-06) — corpus+nutrition, then brand preferencing + on-the-fly list swaps | M–L | `Product`, `BrandPreference` |
 
 ---
 
@@ -80,7 +80,9 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 
 **Built 2026-07-05 — local UPC corpus (see `docs/upc-corpus.md`):** new global `Product` entity (UPC → brand/description/size + per-serving nutrition), sourced with **independent precedence** — description Fry's→stores→OFF, nutrition USDA→OFF — recorded per field-group so Fry's is never downgraded. `InventoryLot.productId` links the physical container; `CanonicalItem.referenceProductId` backs recipe nutrition. Recipe nutrition is computed **per specific container/brand** (pantry product → reference product) and shown per serving on recipe detail. USDA FoodData Central + OFF nutrition clients added; Kroger `getProductByUpc` added; `USDA_FDC_API_KEY` env.
 
-**Still open (the actual "preferencing" ask):**
+**Brand preferencing shipped 2026-07-06:** `BrandPreference (householdId, canonicalItemId, brand)` — per-org preferred brand per ingredient. Shopping-list product selection (`lib/shoppingOptions.ts` `bestOption`) prefers the brand's cheapest option, falling back to cheapest overall with a `preferredBrandUnavailable` flag. On-the-fly swap on the shopping list: pick an option or **scan a UPC** (`POST /shopping-lists/:id/items/:itemId/substitute`), which sets the chosen product + price and **always saves the brand as the standing preference**. Prices from the org's connected stores only. Manage via `GET/DELETE /brand-preferences`. Verified: substituting Smoked Gouda→Murray's saved the pref and auto-select then honored it over the cheaper brand. (Also: fixed a QC Hunts org that had no store/prices by cloning Root's Fry's — prices are per-org.)
+
+**Still open (nice-to-haves):**
 
 - **Brand preferencing** — learn the brands an org actually buys/keeps (from scanned lots, receipts, cart history) and prefer them when suggesting purchases, matching prices, or building shopping lists. Likely a per-org `BrandPreference (householdId, canonicalItemId?, brand, weight)` learned signal. This is the real feature the tester is asking for; needs schema + a scoring pass in the optimizer/list builder.
 - **Canonical-name quality** — OFF `product_name` is crowd-sourced and messy (word order, abbreviations). Consider deriving cleaner generic names from OFF `categories_tags` (e.g. `en:cider-vinegars` → "Cider Vinegar") and a synonym pass, rather than trusting the raw name. Careful not to fragment the canonical dictionary.

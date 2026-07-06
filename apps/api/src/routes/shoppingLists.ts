@@ -225,6 +225,79 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     return { items: await computeItemOptions(household.id, id) };
   });
 
+  // Swap the product for a list item on the fly — pick one of its options (`productId`) or scan a
+  // UPC. Sets the chosen product + price, and remembers the brand as the standing preference.
+  app.post('/shopping-lists/:id/items/:itemId/substitute', async (req, reply) => {
+    const { id, itemId } = req.params as { id: string; itemId: string };
+    const household = await getHousehold(req);
+    const body = (req.body ?? {}) as { productId?: string; upc?: string };
+    const item = await prisma.shoppingListItem.findFirstOrThrow({
+      where: { id: itemId, shoppingList: { id, householdId: household.id } },
+      select: { canonicalItemId: true },
+    });
+    const saveBrand = (brand: string) =>
+      prisma.brandPreference.upsert({
+        where: { householdId_canonicalItemId: { householdId: household.id, canonicalItemId: item.canonicalItemId } },
+        create: { householdId: household.id, canonicalItemId: item.canonicalItemId, brand },
+        update: { brand },
+      });
+
+    const opts = (await computeItemOptions(household.id, id)).find((i) => i.itemId === itemId)?.options ?? [];
+    let chosen = body.productId ? opts.find((o) => o.productId === body.productId) : undefined;
+
+    if (!chosen && body.upc) {
+      const code = body.upc.replace(/\D/g, '');
+      const pp = await prisma.providerProduct.findFirst({
+        where: { upc: code, canonicalItemId: item.canonicalItemId, provider: { householdId: household.id } },
+        select: { id: true },
+      });
+      chosen = pp ? opts.find((o) => o.productId === pp.id) : undefined;
+      if (!chosen) {
+        // Scanned a product we don't stock — still learn the brand for next time.
+        const corpus = await prisma.product.findUnique({ where: { upc: code }, select: { brand: true } });
+        if (corpus?.brand) {
+          await saveBrand(corpus.brand);
+          return { updated: false, savedBrand: corpus.brand, message: `Saved “${corpus.brand}” as your preference — no price for it at your stores yet.` };
+        }
+        reply.code(404);
+        return { updated: false, message: 'That product isn’t stocked at your stores.' };
+      }
+    }
+    if (!chosen) {
+      reply.code(400);
+      return { updated: false, message: 'Provide a productId or a upc.' };
+    }
+
+    await prisma.shoppingListItem.update({
+      where: { id: itemId },
+      data: {
+        chosenProductId: chosen.productId,
+        assignedProviderId: chosen.providerId,
+        estimatedPrice: chosen.totalCost.toFixed(2),
+      },
+    });
+    if (chosen.brand) await saveBrand(chosen.brand);
+    return { updated: true, brand: chosen.brand, price: chosen.totalCost, provider: chosen.providerName };
+  });
+
+  // Standing brand preferences for this org (manage in settings).
+  app.get('/brand-preferences', async (req) => {
+    const household = await getHousehold(req);
+    const rows = await prisma.brandPreference.findMany({
+      where: { householdId: household.id },
+      include: { canonicalItem: { select: { name: true } } },
+      orderBy: { canonicalItem: { name: 'asc' } },
+    });
+    return rows.map((r) => ({ id: r.id, canonicalItemId: r.canonicalItemId, item: r.canonicalItem.name, brand: r.brand }));
+  });
+
+  app.delete('/brand-preferences/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold(req);
+    await prisma.brandPreference.deleteMany({ where: { id, householdId: household.id } });
+    reply.code(204);
+  });
+
   // Set the price mode (cheapest total vs cheapest per-unit) and re-pick the store for the
   // whole list, or a single item when `itemId` is given. Selecting 'total' is also how you
   // revert. Persists priceMode + the chosen product so Build/Cart honor it.
@@ -239,7 +312,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     let selected = 0;
     await prisma.$transaction(
       targets.map((it) => {
-        const best = bestOption(it.options, mode);
+        const best = bestOption(it.options, mode, it.preferredBrand);
         if (best) selected++;
         return prisma.shoppingListItem.update({
           where: { id: it.itemId },

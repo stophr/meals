@@ -122,6 +122,7 @@ model Household {
   integrationTokens IntegrationToken[]
   krogerCoupons  KrogerCoupon[]
   substitutions  IngredientSubstitution[]
+  brandPreferences BrandPreference[]
   recipeFavorites RecipeFavorite[]
   magicLinks     MagicLink[]
 }
@@ -194,6 +195,22 @@ model IngredientSubstitution {
   @@index([householdId])
 }
 
+// Per-org preferred brand for an ingredient — biases shopping-list product choice. A swap while
+// shopping upserts this (always-save). Fallback is cheapest-available when the brand isn't stocked.
+model BrandPreference {
+  id              String        @id @default(cuid())
+  householdId     String
+  household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  canonicalItemId String
+  canonicalItem   CanonicalItem @relation(fields: [canonicalItemId], references: [id], onDelete: Cascade)
+  brand           String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([householdId, canonicalItemId])
+  @@index([householdId])
+}
+
 // ---------------------------------------------------------------------------
 // Catalog: canonical items <-> per-provider products
 // ---------------------------------------------------------------------------
@@ -249,6 +266,7 @@ model CanonicalItem {
   ingredientAliases IngredientAlias[]
   substitutionsFrom IngredientSubstitution[] @relation("SubFrom")
   substitutionsTo   IngredientSubstitution[] @relation("SubTo")
+  brandPreferences  BrandPreference[]
 
   @@index([normKey])
   @@index([name])

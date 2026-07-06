@@ -28,14 +28,35 @@ export interface ItemWithOptions {
   mode: 'total' | 'unit';
   chosenProductId: string | null;
   chosenProviderId: string | null;
+  preferredBrand: string | null; // the org's brand preference for this ingredient
+  preferredBrandUnavailable: boolean; // preference set but no stocked product matches it
   options: ItemOption[];
 }
 
-/** Best option for a single item under a mode (unit falls back to total when no unit price). */
-export function bestOption(options: ItemOption[], mode: 'total' | 'unit'): ItemOption | undefined {
+/** Fuzzy brand match: "Heinz" preference matches a "Heinz Tomato Ketchup" product. */
+export function brandMatch(productBrand: string | null, preferred: string): boolean {
+  if (!productBrand) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const a = norm(productBrand);
+  const b = norm(preferred);
+  return !!a && !!b && (a.includes(b) || b.includes(a));
+}
+
+/**
+ * Best option for a single item under a mode (unit falls back to total when no unit price).
+ * When a preferred brand is given and any stocked option matches it, choose the cheapest of
+ * those; otherwise fall back to the cheapest overall (brand-unavailable case).
+ */
+export function bestOption(
+  options: ItemOption[],
+  mode: 'total' | 'unit',
+  preferredBrand?: string | null,
+): ItemOption | undefined {
   if (!options.length) return undefined;
-  let best = options[0]!;
-  for (const o of options) {
+  const branded = preferredBrand ? options.filter((o) => brandMatch(o.brand, preferredBrand)) : [];
+  const pool = branded.length ? branded : options;
+  let best = pool[0]!;
+  for (const o of pool) {
     if (mode === 'unit') {
       if ((o.unitPrice ?? o.totalCost) < (best.unitPrice ?? best.totalCost)) best = o;
     } else if (o.totalCost < best.totalCost) {
@@ -55,6 +76,12 @@ export async function computeItemOptions(
   });
   const canonicalIds = list.items.map((i) => i.canonicalItemId);
   const now = new Date();
+
+  const prefRows = await prisma.brandPreference.findMany({
+    where: { householdId, canonicalItemId: { in: canonicalIds } },
+    select: { canonicalItemId: true, brand: true },
+  });
+  const prefMap = new Map(prefRows.map((p) => [p.canonicalItemId, p.brand]));
 
   const providers = await prisma.provider.findMany({
     where: { householdId },
@@ -106,6 +133,7 @@ export async function computeItemOptions(
       }
     }
     options.sort((a, b) => a.totalCost - b.totalCost);
+    const preferredBrand = prefMap.get(item.canonicalItemId) ?? null;
     return {
       itemId: item.id,
       canonicalItemId: item.canonicalItemId,
@@ -115,6 +143,8 @@ export async function computeItemOptions(
       mode: item.priceMode === 'unit' ? 'unit' : 'total',
       chosenProductId: item.chosenProductId,
       chosenProviderId: item.assignedProviderId,
+      preferredBrand,
+      preferredBrandUnavailable: !!preferredBrand && !options.some((o) => brandMatch(o.brand, preferredBrand)),
       options,
     };
   });
