@@ -494,6 +494,21 @@ export function Inventory() {
     pickItem(item);
   }
 
+  // Clear whatever the last scan produced and jump straight back to the camera.
+  function rescan() {
+    setAddSel(undefined);
+    setAddQuery('');
+    setAddQty(1);
+    setAddBrand('');
+    setAddProductId(undefined);
+    setAddImageUrl(undefined);
+    setAddExpires('');
+    setMapGtin(undefined);
+    setFromScan(false);
+    setMsg(undefined);
+    setScanning(true);
+  }
+
   async function onScanned(code: string) {
     setScanning(false);
     setScanBusy(true);
@@ -663,6 +678,9 @@ export function Inventory() {
               >
                 Map
               </button>
+              <button className="chip" onClick={rescan} title="Scan again">
+                🔄 Rescan
+              </button>
               <button className="chip" onClick={() => setMapGtin(undefined)}>
                 cancel
               </button>
@@ -705,6 +723,11 @@ export function Inventory() {
               <button className="btn btn-inline" onClick={addLot} disabled={addQty <= 0}>
                 Add
               </button>
+              {fromScan && (
+                <button className="chip" onClick={rescan} title="Wrong item? Scan again">
+                  🔄 Rescan
+                </button>
+              )}
             </div>
             <div className="sheet-row">
               <input
