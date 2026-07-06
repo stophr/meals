@@ -61,6 +61,45 @@ export async function integrationRoutes(app: FastifyInstance) {
     return searchLocations(cfg, token, { zip, chain: chain ?? 'FRYS' });
   });
 
+  // Connect a chosen Fry's/Kroger store to this household (creates the provider if the org has
+  // none yet, else updates the existing one for that location). Prices then populate via a sync.
+  app.post('/integrations/kroger/connect', async (req, reply) => {
+    const cfg = krogerConfig();
+    if (!cfg) {
+      reply.code(503);
+      return { message: 'Kroger not configured' };
+    }
+    const household = await getHousehold(req);
+    const b = (req.body ?? {}) as {
+      locationId?: string;
+      name?: string;
+      address?: string;
+      lat?: number;
+      lng?: number;
+    };
+    if (!b.locationId) {
+      reply.code(400);
+      return { message: 'locationId required' };
+    }
+    const providers = await prisma.provider.findMany({ where: { householdId: household.id } });
+    const existing = providers.find((p) => krogerLocationId(p) === b.locationId);
+    const data = {
+      name: b.name?.trim() || "Fry's",
+      type: 'grocery',
+      address: b.address,
+      lat: b.lat,
+      lng: b.lng,
+      integration: { type: 'kroger', locationId: b.locationId },
+    };
+    const provider = existing
+      ? await prisma.provider.update({ where: { id: existing.id }, data })
+      : await prisma.provider.create({
+          data: { householdId: household.id, travelMinutes: 10, travelKm: 5, ...data },
+        });
+    reply.code(existing ? 200 : 201);
+    return { id: provider.id, name: provider.name, locationId: b.locationId };
+  });
+
   // Attach a Kroger location to one of our providers.
   app.post('/providers/:id/link-kroger', async (req, reply) => {
     const { id } = req.params as { id: string };

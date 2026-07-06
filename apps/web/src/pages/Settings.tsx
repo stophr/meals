@@ -432,6 +432,142 @@ function SubstitutionsPanel() {
   );
 }
 
+interface KrogerStatus {
+  configured: boolean;
+  cartAuthorized: boolean;
+  linkedProviders: { id: string; name: string; locationId: string | null }[];
+}
+interface KLocation {
+  locationId: string;
+  chain: string;
+  name: string;
+  address: string;
+  lat?: number;
+  lng?: number;
+}
+
+/** Connect your Fry's store (by zip) and link your Fry's account for cart pushes. */
+function KrogerPanel() {
+  const [status, setStatus] = useState<KrogerStatus>();
+  const [zip, setZip] = useState('');
+  const [results, setResults] = useState<KLocation[]>();
+  const [msg, setMsg] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api.get<KrogerStatus>('/integrations/kroger/status').then(setStatus).catch(() => {});
+  useEffect(() => {
+    load();
+    // Coming back from the Fry's OAuth redirect (/?kroger=linked) — refresh + toast.
+    if (new URLSearchParams(window.location.search).get('kroger') === 'linked') {
+      setMsg('Fry’s account linked ✓');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  async function search() {
+    if (!/^\d{5}$/.test(zip.trim())) {
+      setMsg('Enter a 5-digit zip code.');
+      return;
+    }
+    setBusy(true);
+    setMsg(undefined);
+    setResults(undefined);
+    try {
+      const r = await api.get<KLocation[]>(`/integrations/kroger/locations?zip=${zip.trim()}&chain=FRYS`);
+      setResults(r);
+      if (!r.length) setMsg('No Fry’s found near that zip.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connect(loc: KLocation) {
+    setBusy(true);
+    try {
+      await api.post('/integrations/kroger/connect', {
+        locationId: loc.locationId,
+        name: loc.name,
+        address: loc.address,
+        lat: loc.lat,
+        lng: loc.lng,
+      });
+      setMsg(`Connected ${loc.name}. Prices populate when you build a shopping list.`);
+      setResults(undefined);
+      setZip('');
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return null;
+  return (
+    <div className="card add-card">
+      <div className="section-label">🏪 Fry's / Kroger</div>
+      {!status.configured ? (
+        <p className="muted">Kroger isn’t configured on the server (KROGER_CLIENT_ID / KROGER_CLIENT_SECRET).</p>
+      ) : (
+        <>
+          {status.linkedProviders.length > 0 ? (
+            <div className="card-sub">
+              Connected: <strong>{status.linkedProviders.map((p) => p.name).join(', ')}</strong>
+            </div>
+          ) : (
+            <div className="card-sub muted">No store connected — find your closest Fry’s below.</div>
+          )}
+
+          <div className="sheet-row">
+            <input
+              className="sheet-input"
+              inputMode="numeric"
+              placeholder="your zip code"
+              value={zip}
+              onChange={(e) => setZip(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && search()}
+            />
+            <button className="btn btn-inline" onClick={search} disabled={busy}>
+              Find my Fry’s
+            </button>
+          </div>
+
+          {results?.map((loc) => (
+            <div key={loc.locationId} className="sheet-row">
+              <span>
+                {loc.name} <span className="muted">· {loc.address}</span>
+              </span>
+              <button className="chip" onClick={() => connect(loc)} disabled={busy}>
+                Connect
+              </button>
+            </div>
+          ))}
+
+          <div className="sheet-row" style={{ marginTop: 8, alignItems: 'center' }}>
+            {status.cartAuthorized ? (
+              <span className="badge badge-ok">✓ Fry’s account linked</span>
+            ) : (
+              <button
+                className="btn btn-inline"
+                onClick={() => {
+                  window.location.href = '/api/integrations/kroger/authorize';
+                }}
+              >
+                Link my Fry’s account
+              </button>
+            )}
+            <small className="muted">Lets the app push your shopping list into your real Fry’s cart.</small>
+          </div>
+        </>
+      )}
+      {msg && <p className="notice">{msg}</p>}
+    </div>
+  );
+}
+
 export function Settings() {
   const [data, setData] = useState<SettingsData>();
   const [saved, setSaved] = useState(false);
@@ -463,6 +599,7 @@ export function Settings() {
     <section className="page">
       <h2>Settings</h2>
       <OrgPanel />
+      <KrogerPanel />
       <SubstitutionsPanel />
       <label className="field">
         <span>Household name</span>
