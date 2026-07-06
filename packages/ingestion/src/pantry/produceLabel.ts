@@ -57,8 +57,11 @@ export async function extractProduceLabel(
     body: JSON.stringify({
       model: cfg.model,
       temperature: 0,
-      max_tokens: 300,
-      response_format: { type: 'json_object' },
+      // Roomy budget: reasoning vision models (qwen3-vl) spend tokens "thinking" and return an
+      // empty answer if the budget is too small. Non-reasoning models (qwen2.5vl) stop early.
+      max_tokens: 1536,
+      // NB: no response_format json_object — some vision models (qwen3-vl) error on it via
+      // Ollama. The prompt asks for JSON and extractJsonValue pulls it out of the text.
       messages: [
         {
           role: 'user',
