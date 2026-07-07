@@ -170,6 +170,16 @@ body {
   font-weight: 600;
 }
 
+.item-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.item-remove {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
 /* Shopping swap modal */
 .swap-sheet {
   max-height: 82vh;

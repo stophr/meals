@@ -774,9 +774,6 @@ export function Shopping() {
                         onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
                       >
                         {capturing === it.id ? 'close' : '💲 price'}
-                      </button>{' '}
-                      <button className="entry-x" title="Remove from list" onClick={() => deleteItem(it.id)}>
-                        ✕
                       </button>
                     </div>
                   </div>
@@ -855,6 +852,12 @@ export function Shopping() {
                       }}
                     />
                   )}
+
+                  <div className="item-footer">
+                    <button className="btn-link item-remove" onClick={() => deleteItem(it.id)}>
+                      ✕ remove
+                    </button>
+                  </div>
                 </li>
               );
             })}
