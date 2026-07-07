@@ -272,7 +272,11 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     if (!chosen && body.upc) {
       const code = body.upc.replace(/\D/g, '');
       const pp = await prisma.providerProduct.findFirst({
-        where: { upc: code, canonicalItemId: item.canonicalItemId, provider: { householdId: household.id } },
+        where: {
+          upc: code,
+          canonicalItemId: item.canonicalItemId,
+          storeLocation: { providers: { some: { householdId: household.id } } },
+        },
         select: { id: true },
       });
       chosen = pp ? opts.find((o) => o.productId === pp.id) : undefined;

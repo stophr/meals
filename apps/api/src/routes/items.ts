@@ -203,7 +203,7 @@ export async function itemRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     return prisma.providerProduct.findMany({
       where: { canonicalItemId: id },
-      include: { provider: true },
+      include: { storeLocation: true },
     });
   });
 
@@ -219,11 +219,13 @@ export async function itemRoutes(app: FastifyInstance) {
   // Attach a store listing to (optionally) a canonical item.
   app.post('/products', async (req, reply) => {
     const data = providerProductCreateSchema.parse(req.body);
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { id: data.providerId } });
+    if (!provider.storeLocationId) throw new Error('Provider has no store-location corpus');
     const base = data.packSize && data.packUnit ? toBaseQuantity(data.packSize, data.packUnit) : undefined;
     reply.code(201);
     return prisma.providerProduct.create({
       data: {
-        providerId: data.providerId,
+        storeLocationId: provider.storeLocationId,
         canonicalItemId: data.canonicalItemId,
         rawName: data.rawName,
         brand: data.brand,

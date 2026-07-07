@@ -63,10 +63,13 @@ export async function ingestRoutes(app: FastifyInstance) {
         },
       });
 
-      // Build match candidates from the provider's known products.
-      const candidates = providerId
+      // Build match candidates from the store location's shared corpus.
+      const storeLocationId = providerId
+        ? (await prisma.provider.findUnique({ where: { id: providerId } }))?.storeLocationId ?? null
+        : null;
+      const candidates = storeLocationId
         ? (
-            await prisma.providerProduct.findMany({ where: { providerId } })
+            await prisma.providerProduct.findMany({ where: { storeLocationId } })
           ).map((p) => ({ productId: p.id, text: `${p.brand ?? ''} ${p.rawName}`.trim() }))
         : [];
 
@@ -141,6 +144,9 @@ export async function ingestRoutes(app: FastifyInstance) {
     }
 
     const providerId = line.job.providerId;
+    const storeLocationId = providerId
+      ? (await prisma.provider.findUnique({ where: { id: providerId } }))?.storeLocationId ?? null
+      : null;
     const productId = data.providerProductId ?? line.matchProductId ?? undefined;
 
     return prisma.$transaction(async (tx) => {
@@ -148,10 +154,10 @@ export async function ingestRoutes(app: FastifyInstance) {
 
       // "new": create a ProviderProduct (optionally linked to a canonical item) from the line.
       if (data.action === 'new') {
-        if (!providerId) throw new Error('Cannot create product: job has no providerId');
+        if (!storeLocationId) throw new Error('Cannot create product: job has no store location');
         const created = await tx.providerProduct.create({
           data: {
-            providerId,
+            storeLocationId,
             canonicalItemId: data.canonicalItemId,
             rawName: line.rawName,
           },
@@ -187,10 +193,10 @@ export async function ingestRoutes(app: FastifyInstance) {
       }
 
       // Learn the alias so the next identical line auto-matches.
-      if (providerId) {
+      if (storeLocationId) {
         await tx.productAlias.upsert({
-          where: { providerId_normalizedRawName: { providerId, normalizedRawName: normalizeName(line.rawName) } },
-          create: { providerId, normalizedRawName: normalizeName(line.rawName), providerProductId: targetProductId },
+          where: { storeLocationId_normalizedRawName: { storeLocationId, normalizedRawName: normalizeName(line.rawName) } },
+          create: { storeLocationId, normalizedRawName: normalizeName(line.rawName), providerProductId: targetProductId },
           update: { providerProductId: targetProductId },
         });
       }

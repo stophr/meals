@@ -9,6 +9,7 @@ import {
 import { parseIngredientLine, toBaseQuantity } from '@meals/core';
 import { getHousehold } from '../lib/household.js';
 import { recordProviderPrices } from '../lib/costcoPrices.js';
+import { ensureStoreLocationFor } from '../lib/kroger.js';
 
 export async function providerRoutes(app: FastifyInstance) {
   app.get('/providers', async (req) => {
@@ -19,8 +20,10 @@ export async function providerRoutes(app: FastifyInstance) {
   app.post('/providers', async (req, reply) => {
     const data = providerCreateSchema.parse(req.body);
     const household = await getHousehold(req);
+    const provider = await prisma.provider.create({ data: { ...data, householdId: household.id } });
+    const storeLocationId = await ensureStoreLocationFor(provider);
     reply.code(201);
-    return prisma.provider.create({ data: { ...data, householdId: household.id } });
+    return prisma.provider.update({ where: { id: provider.id }, data: { storeLocationId } });
   });
 
   app.patch('/providers/:id', async (req) => {
@@ -41,15 +44,18 @@ export async function providerRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const { canonicalItemId, price, size, brand } = quickPriceSchema.parse(req.body);
     const item = await prisma.canonicalItem.findUniqueOrThrow({ where: { id: canonicalItemId } });
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { id } });
+    const storeLocationId = provider.storeLocationId;
+    if (!storeLocationId) throw new Error('Provider has no store-location corpus');
     const parsed = size ? parseIngredientLine(size) : null;
     const base =
       parsed?.quantity && parsed.unit ? toBaseQuantity(parsed.quantity, parsed.unit) : null;
 
     const upc = `manual:${canonicalItemId}`;
     const product = await prisma.providerProduct.upsert({
-      where: { providerId_upc: { providerId: id, upc } },
+      where: { storeLocationId_upc: { storeLocationId, upc } },
       create: {
-        providerId: id,
+        storeLocationId,
         canonicalItemId,
         rawName: item.name,
         brand,

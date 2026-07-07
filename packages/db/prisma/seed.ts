@@ -23,12 +23,17 @@ async function main() {
     },
   });
 
-  const megamart = await prisma.provider.create({
-    data: { householdId: household.id, name: 'MegaMart', travelMinutes: 10, travelKm: 4 },
-  });
-  const freshfarm = await prisma.provider.create({
-    data: { householdId: household.id, name: 'FreshFarm', travelMinutes: 25, travelKm: 12 },
-  });
+  // Each seed store gets its own shared StoreLocation corpus (products/prices attach here).
+  async function makeStore(name: string, travelMinutes: number, travelKm: number) {
+    const loc = await prisma.storeLocation.create({
+      data: { locationKey: `seed:${name}`, chain: 'manual', name },
+    });
+    return prisma.provider.create({
+      data: { householdId: household.id, name, travelMinutes, travelKm, storeLocationId: loc.id },
+    });
+  }
+  const megamart = await makeStore('MegaMart', 10, 4);
+  const freshfarm = await makeStore('FreshFarm', 25, 12);
 
   // canonical item + a product at each store + a current price.
   async function stockItem(opts: {
@@ -63,7 +68,7 @@ async function main() {
     ]) {
       const product = await prisma.providerProduct.create({
         data: {
-          providerId: provider.id,
+          storeLocationId: provider.storeLocationId!,
           canonicalItemId: item.id,
           rawName: `${opts.brand ?? ''} ${opts.name}`.trim(),
           brand: opts.brand,

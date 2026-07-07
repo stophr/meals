@@ -83,16 +83,22 @@ export async function computeItemOptions(
   });
   const prefMap = new Map(prefRows.map((p) => [p.canonicalItemId, p.brand]));
 
+  // Products/prices live on the shared StoreLocation corpus; a household sees them through
+  // whichever of its providers points at that location.
   const providers = await prisma.provider.findMany({
     where: { householdId },
     include: {
-      products: {
-        where: { canonicalItemId: { in: canonicalIds } },
+      storeLocation: {
         include: {
-          prices: {
-            where: { validFrom: { lte: now }, OR: [{ validTo: null }, { validTo: { gte: now } }] },
-            orderBy: { observedAt: 'desc' },
-            take: 1,
+          products: {
+            where: { canonicalItemId: { in: canonicalIds } },
+            include: {
+              prices: {
+                where: { validFrom: { lte: now }, OR: [{ validTo: null }, { validTo: { gte: now } }] },
+                orderBy: { observedAt: 'desc' },
+                take: 1,
+              },
+            },
           },
         },
       },
@@ -108,7 +114,7 @@ export async function computeItemOptions(
     };
     const options: ItemOption[] = [];
     for (const provider of providers) {
-      for (const product of provider.products) {
+      for (const product of provider.storeLocation?.products ?? []) {
         if (product.canonicalItemId !== item.canonicalItemId) continue;
         const price = product.prices[0];
         if (!price) continue;

@@ -29,6 +29,8 @@ export async function recordProviderPrices(
 ): Promise<RecordResult> {
   const provider = await prisma.provider.findFirst({ where: { id: providerId, householdId } });
   if (!provider) throw new Error('Provider not found');
+  const storeLocationId = provider.storeLocationId;
+  if (!storeLocationId) throw new Error('Provider has no store-location corpus');
 
   const items = await prisma.canonicalItem.findMany(); // global dictionary
   const candidates = items.map((i) => ({ productId: i.id, text: i.name }));
@@ -62,9 +64,9 @@ export async function recordProviderPrices(
       parsed?.quantity && parsed.unit ? toBaseQuantity(parsed.quantity, parsed.unit) : null;
 
     const product = await prisma.providerProduct.upsert({
-      where: { providerId_upc: { providerId, upc } },
+      where: { storeLocationId_upc: { storeLocationId, upc } },
       create: {
-        providerId,
+        storeLocationId,
         canonicalItemId,
         rawName: line.name,
         sizeText: line.size,
@@ -95,10 +97,10 @@ export async function recordProviderPrices(
     });
     await prisma.productAlias.upsert({
       where: {
-        providerId_normalizedRawName: { providerId, normalizedRawName: normalizeName(line.name) },
+        storeLocationId_normalizedRawName: { storeLocationId, normalizedRawName: normalizeName(line.name) },
       },
       create: {
-        providerId,
+        storeLocationId,
         normalizedRawName: normalizeName(line.name),
         providerProductId: product.id,
       },

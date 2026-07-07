@@ -20,16 +20,20 @@ export async function buildOptimizerInput(
   const providers = await prisma.provider.findMany({
     where: { householdId },
     include: {
-      products: {
-        where: { canonicalItemId: { in: canonicalIds } },
+      storeLocation: {
         include: {
-          prices: {
-            where: {
-              validFrom: { lte: now },
-              OR: [{ validTo: null }, { validTo: { gte: now } }],
+          products: {
+            where: { canonicalItemId: { in: canonicalIds } },
+            include: {
+              prices: {
+                where: {
+                  validFrom: { lte: now },
+                  OR: [{ validTo: null }, { validTo: { gte: now } }],
+                },
+                orderBy: { observedAt: 'desc' },
+                take: 1,
+              },
             },
-            orderBy: { observedAt: 'desc' },
-            take: 1,
           },
         },
       },
@@ -45,7 +49,7 @@ export async function buildOptimizerInput(
       // A store may stock several SIZE VARIANTS of the item — evaluate each (buy whole
       // packs to cover the need) and take the cheapest way to satisfy the quantity.
       // Big packs win on unit price; small packs win when the need is small.
-      const variants = p.products.filter((pp) => pp.canonicalItemId === item.canonicalItemId);
+      const variants = (p.storeLocation?.products ?? []).filter((pp) => pp.canonicalItemId === item.canonicalItemId);
       let best: { productId: string; cost: number } | undefined;
       for (const product of variants) {
         const price = product.prices[0];

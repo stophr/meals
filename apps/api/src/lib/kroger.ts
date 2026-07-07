@@ -25,6 +25,37 @@ export function krogerLocationId(provider: Provider): string | null {
   return integ?.type === 'kroger' && integ.locationId ? integ.locationId : null;
 }
 
+/**
+ * Ensure the shared StoreLocation corpus for a provider exists and return its id. Kroger stores
+ * key on their locationId ("kroger:66000693") so households at the same store share one corpus;
+ * non-integrated stores get a private per-provider corpus ("provider:<id>").
+ */
+export async function ensureStoreLocationFor(provider: {
+  id: string;
+  name: string;
+  address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  integration: unknown;
+}): Promise<string> {
+  const integ = provider.integration as { type?: string; locationId?: string } | null;
+  const isKroger = integ?.type === 'kroger' && !!integ.locationId;
+  const locationKey = isKroger ? `kroger:${integ!.locationId}` : `provider:${provider.id}`;
+  const loc = await prisma.storeLocation.upsert({
+    where: { locationKey },
+    create: {
+      locationKey,
+      chain: isKroger ? 'kroger' : 'manual',
+      name: provider.name,
+      address: provider.address ?? null,
+      lat: provider.lat ?? null,
+      lng: provider.lng ?? null,
+    },
+    update: {}, // shared corpus: first namer wins
+  });
+  return loc.id;
+}
+
 // App token cache (client credentials, ~30 min lifetime).
 let appToken: KrogerTokens | null = null;
 export async function getAppToken(cfg: KrogerConfig): Promise<string> {
@@ -71,6 +102,8 @@ export async function syncPrices(
 ): Promise<SyncResult> {
   const locationId = krogerLocationId(provider);
   if (!locationId) throw new Error('Provider is not linked to a Kroger location');
+  const storeLocationId = provider.storeLocationId;
+  if (!storeLocationId) throw new Error('Provider has no store-location corpus');
 
   const items = await prisma.canonicalItem.findMany({ where: { id: { in: canonicalItemIds } } });
   const token = await getAppToken(cfg);
@@ -158,9 +191,9 @@ export async function syncPrices(
           : null;
 
       const product = await prisma.providerProduct.upsert({
-        where: { providerId_upc: { providerId: provider.id, upc: chosen.upc } },
+        where: { storeLocationId_upc: { storeLocationId, upc: chosen.upc } },
         create: {
-          providerId: provider.id,
+          storeLocationId,
           canonicalItemId: item.id,
           rawName: chosen.description,
           brand: chosen.brand,
@@ -196,13 +229,13 @@ export async function syncPrices(
       // Persist the alias so receipt OCR lines auto-match this product too.
       await prisma.productAlias.upsert({
         where: {
-          providerId_normalizedRawName: {
-            providerId: provider.id,
+          storeLocationId_normalizedRawName: {
+            storeLocationId,
             normalizedRawName: normalizeName(chosen.description),
           },
         },
         create: {
-          providerId: provider.id,
+          storeLocationId,
           normalizedRawName: normalizeName(chosen.description),
           providerProductId: product.id,
         },

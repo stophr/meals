@@ -30,7 +30,7 @@ async function main() {
   const freshCutoff = new Date(Date.now() - staleDays * 86_400_000);
   const fresh = await prisma.providerProduct.findMany({
     where: {
-      providerId: provider.id,
+      storeLocationId: provider.storeLocationId ?? '',
       canonicalItemId: { not: null },
       prices: { some: { observedAt: { gte: freshCutoff } } },
     },

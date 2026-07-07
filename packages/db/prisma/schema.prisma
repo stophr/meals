@@ -289,10 +289,35 @@ model IngredientAlias {
   @@index([canonicalItemId])
 }
 
+// A physical store location whose product corpus (listings + prices) is SHARED by every
+// household that shops there. Keyed by chain+locationId ("kroger:66000693"), so two households
+// linked to the same Fry's pull from one corpus; a never-seen location mints a new one.
+model StoreLocation {
+  id          String @id @default(cuid())
+  chain       String // "kroger" for integrated stores; "manual" for hand-entered ones
+  locationKey String @unique // "kroger:<locationId>" or "provider:<providerId>" (manual, per-provider)
+
+  name    String
+  address String?
+  lat     Float?
+  lng     Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  providers Provider[]
+  products  ProviderProduct[]
+  aliases   ProductAlias[]
+}
+
 model Provider {
   id          String     @id @default(cuid())
   householdId String
   household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // The shared store-location corpus this household's provider draws from.
+  storeLocationId String?
+  storeLocation   StoreLocation? @relation(fields: [storeLocationId], references: [id], onDelete: SetNull)
 
   name    String
   type    String  @default("grocery")
@@ -310,10 +335,8 @@ model Provider {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  products ProviderProduct[]
-  aliases  ProductAlias[]
-
   @@index([householdId])
+  @@index([storeLocationId])
 }
 
 // Digital coupons fetched from the user's Fry's/Kroger account (via the host-side
@@ -361,9 +384,11 @@ model IntegrationToken {
 }
 
 model ProviderProduct {
-  id         String   @id @default(cuid())
-  providerId String
-  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+
+  // Products belong to the shared store-location corpus, not one household's provider.
+  storeLocationId String
+  storeLocation   StoreLocation @relation(fields: [storeLocationId], references: [id], onDelete: Cascade)
 
   // Null until matched to a canonical item (matcher + human review).
   canonicalItemId String?
@@ -390,8 +415,8 @@ model ProviderProduct {
   prices  PriceObservation[]
   aliases ProductAlias[]
 
-  @@unique([providerId, upc])
-  @@index([providerId])
+  @@unique([storeLocationId, upc])
+  @@index([storeLocationId])
   @@index([canonicalItemId])
   @@index([upc])
 }
@@ -447,9 +472,10 @@ model Product {
 // Learned rawName -> product mapping, persisted from every human review decision so the
 // next identical line auto-matches.
 model ProductAlias {
-  id         String   @id @default(cuid())
-  providerId String
-  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+
+  storeLocationId String
+  storeLocation   StoreLocation @relation(fields: [storeLocationId], references: [id], onDelete: Cascade)
 
   normalizedRawName String
   providerProductId String
@@ -457,7 +483,7 @@ model ProductAlias {
 
   createdAt DateTime @default(now())
 
-  @@unique([providerId, normalizedRawName])
+  @@unique([storeLocationId, normalizedRawName])
   @@index([providerProductId])
 }
 

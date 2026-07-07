@@ -42,7 +42,7 @@ export async function loadItemPrices(householdId: string): Promise<Map<string, I
       ci."gramsPerMl"::text, ci."gramsPerEach"::text
     FROM "PriceObservation" po
     JOIN "ProviderProduct" pp ON pp.id = po."providerProductId"
-    JOIN "Provider" p ON p.id = pp."providerId"
+    JOIN "Provider" p ON p."storeLocationId" = pp."storeLocationId"
     JOIN "CanonicalItem" ci ON ci.id = pp."canonicalItemId"
     WHERE p."householdId" = ${householdId}
       AND pp."canonicalItemId" IS NOT NULL

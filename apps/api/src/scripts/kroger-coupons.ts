@@ -163,7 +163,10 @@ async function fetchAndPropose() {
 
   // Match: UPC-exact against synced Fry's products, then fuzzy vs items on active lists.
   const products = await prisma.providerProduct.findMany({
-    where: { upc: { not: null }, provider: { householdId: household.id } },
+    where: {
+      upc: { not: null },
+      storeLocation: { providers: { some: { householdId: household.id } } },
+    },
     include: { canonicalItem: { select: { name: true } } },
   });
   const byUpc = new Map(products.map((p) => [p.upc!, p]));

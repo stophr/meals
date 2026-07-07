@@ -20,7 +20,7 @@ import {
 import { chatJson } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
 import { computeItemOptions } from '../lib/shoppingOptions.js';
-import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices } from '../lib/kroger.js';
+import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices, ensureStoreLocationFor } from '../lib/kroger.js';
 import { recordCostcoPrices } from '../lib/costcoPrices.js';
 import { env } from '../env.js';
 
@@ -83,6 +83,23 @@ export async function integrationRoutes(app: FastifyInstance) {
     }
     const providers = await prisma.provider.findMany({ where: { householdId: household.id } });
     const existing = providers.find((p) => krogerLocationId(p) === b.locationId);
+
+    // Reuse the shared corpus for this physical store if any household already built one;
+    // otherwise mint a new StoreLocation. Two households at the same Fry's now share products.
+    const locationKey = `kroger:${b.locationId}`;
+    const storeLocation = await prisma.storeLocation.upsert({
+      where: { locationKey },
+      create: {
+        locationKey,
+        chain: 'kroger',
+        name: b.name?.trim() || "Fry's",
+        address: b.address,
+        lat: b.lat,
+        lng: b.lng,
+      },
+      update: {}, // first namer wins; don't clobber a shared corpus's metadata
+    });
+
     const data = {
       name: b.name?.trim() || "Fry's",
       type: 'grocery',
@@ -90,6 +107,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       lat: b.lat,
       lng: b.lng,
       integration: { type: 'kroger', locationId: b.locationId },
+      storeLocationId: storeLocation.id,
     };
     const provider = existing
       ? await prisma.provider.update({ where: { id: existing.id }, data })
@@ -97,7 +115,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           data: { householdId: household.id, travelMinutes: 10, travelKm: 5, ...data },
         });
     reply.code(existing ? 200 : 201);
-    return { id: provider.id, name: provider.name, locationId: b.locationId };
+    const productCount = await prisma.providerProduct.count({ where: { storeLocationId: storeLocation.id } });
+    return { id: provider.id, name: provider.name, locationId: b.locationId, sharedProducts: productCount };
   });
 
   // Attach a Kroger location to one of our providers.
@@ -108,10 +127,12 @@ export async function integrationRoutes(app: FastifyInstance) {
       reply.code(400);
       return { message: 'locationId required' };
     }
-    return prisma.provider.update({
+    const provider = await prisma.provider.update({
       where: { id },
       data: { integration: { type: 'kroger', locationId } },
     });
+    const storeLocationId = await ensureStoreLocationFor(provider);
+    return prisma.provider.update({ where: { id }, data: { storeLocationId } });
   });
 
   // Disconnect the Fry's account: drop the stored cart-authorization token. (The user can also
