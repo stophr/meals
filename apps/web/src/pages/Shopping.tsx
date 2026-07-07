@@ -91,6 +91,86 @@ function storeTemplate(name: string) {
   return STORE_TEMPLATES.find((t) => t.match.test(name));
 }
 
+const UNIT_GROUPS: { label: string; units: string[] }[] = [
+  { label: 'Weight', units: ['LB', 'OZ', 'G', 'KG'] },
+  { label: 'Volume', units: ['CUP', 'TBSP', 'TSP', 'FLOZ', 'ML', 'L'] },
+  { label: 'Count', units: ['EACH', 'PACK', 'CAN', 'BOTTLE', 'BUNCH'] },
+];
+const DEFAULT_UNIT: Record<string, string> = { MASS: 'LB', VOLUME: 'CUP', COUNT: 'EACH' };
+function defaultUnitFor(baseUnit?: string | null): string {
+  return baseUnit ? DEFAULT_UNIT[dimensionOf(baseUnit as Unit)] ?? 'EACH' : 'EACH';
+}
+function UnitSelect({ value, onChange }: { value: string; onChange: (u: string) => void }) {
+  return (
+    <select className="chip" value={value} onChange={(e) => onChange(e.target.value)}>
+      {UNIT_GROUPS.map((g) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.units.map((u) => (
+            <option key={u} value={u}>
+              {u.toLowerCase()}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+/** Second window for swapping a list item: search/filter its products, or scan the UPC. */
+function SwapModal({
+  item,
+  unit,
+  onPick,
+  onScan,
+  onClose,
+}: {
+  item: ItemWithOptions;
+  unit: string;
+  onPick: (o: ItemOption) => void;
+  onScan: () => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const opts = item.options.filter((o) => {
+    const s = `${o.providerName} ${o.brand ?? ''} ${o.size ?? ''}`.toLowerCase();
+    return !q.trim() || s.includes(q.toLowerCase());
+  });
+  return (
+    <div className="sheet swap-sheet">
+      <div className="sheet-title">Swap: {item.name}</div>
+      <div className="sheet-row">
+        <input
+          className="sheet-input sheet-input-wide"
+          placeholder="search brand or size…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoFocus
+        />
+        <button className="btn btn-inline" onClick={onScan}>
+          📷 Scan
+        </button>
+      </div>
+      <div className="swap-opts">
+        {opts.map((o) => (
+          <button key={o.productId} className="swap-opt" onClick={() => onPick(o)}>
+            <span>
+              <strong>{o.brand ?? '—'}</strong> {o.size ? <span className="muted">· {o.size}</span> : ''}
+            </span>
+            <span>
+              {o.providerName} · <strong>${o.totalCost.toFixed(2)}</strong>
+              <span className="muted">{unitPriceLabel(o, unit)}</span>
+            </span>
+          </button>
+        ))}
+        {!opts.length && <p className="muted">No matching products — try scanning the UPC.</p>}
+      </div>
+      <button className="chip" onClick={onClose}>
+        close
+      </button>
+    </div>
+  );
+}
+
 /** Tap a store to open the item there; type the price you see; it's saved for that store. */
 function PriceCapture({
   item,
@@ -308,6 +388,14 @@ export function Shopping() {
   const [scanItemId, setScanItemId] = useState<string>();
   const [priceMsg, setPriceMsg] = useState<string>();
   const [newItem, setNewItem] = useState('');
+  const [addResults, setAddResults] = useState<{ id: string; name: string; baseUnit?: string | null }[]>();
+  const [addSel, setAddSel] = useState<{ id: string; name: string; baseUnit?: string | null }>();
+  const [addQty, setAddQty] = useState(1);
+  const [addUnit, setAddUnit] = useState('EACH');
+  const [swapItem, setSwapItem] = useState<ItemWithOptions>();
+  const [editItemId, setEditItemId] = useState<string>();
+  const [editQty, setEditQty] = useState(1);
+  const [editUnit, setEditUnit] = useState('EACH');
 
   const refresh = () => setNonce((n) => n + 1);
 
@@ -337,12 +425,57 @@ export function Shopping() {
     refresh();
   }
 
+  // Autocomplete the add box against the item catalog.
+  useEffect(() => {
+    if (!newItem.trim() || addSel) {
+      setAddResults(undefined);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const hits = await api.get<{ id: string; name: string; baseUnit?: string | null }[]>(
+        `/items?q=${encodeURIComponent(newItem.trim())}`,
+      );
+      setAddResults(hits.slice(0, 8));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [newItem, addSel]);
+
+  function pickAddItem(hit: { id: string; name: string; baseUnit?: string | null }) {
+    setAddSel(hit);
+    setNewItem(hit.name);
+    setAddUnit(defaultUnitFor(hit.baseUnit));
+    setAddResults(undefined);
+  }
+
   async function addOneOff() {
     if (!selected || !newItem.trim()) return;
-    await api.post(`/shopping-lists/${selected}/items`, { name: newItem.trim() });
+    await api.post(`/shopping-lists/${selected}/items`, {
+      name: (addSel?.name ?? newItem).trim(),
+      quantity: addQty,
+      unit: addUnit,
+    });
     setNewItem('');
+    setAddSel(undefined);
+    setAddQty(1);
+    setAddUnit('EACH');
     setDetail(await api.get<ListDetail>(`/shopping-lists/${selected}`));
     await loadOptions(selected);
+  }
+
+  async function deleteItem(itemId: string) {
+    if (!selected) return;
+    await api.del(`/shopping-lists/${selected}/items/${itemId}`);
+    setDetail(await api.get<ListDetail>(`/shopping-lists/${selected}`));
+    await loadOptions(selected);
+    setBuild(undefined);
+  }
+
+  async function editItemAmount(itemId: string, quantity: number, unit: string) {
+    if (!selected || !(quantity > 0)) return;
+    await api.patch(`/shopping-lists/${selected}/items/${itemId}`, { quantity, unit });
+    await loadOptions(selected);
+    setDetail(await api.get<ListDetail>(`/shopping-lists/${selected}`));
+    setBuild(undefined);
   }
 
   async function selectMode(mode: 'unit' | 'total', itemId?: string) {
@@ -507,16 +640,51 @@ export function Shopping() {
           </div>
           <h3>{detail.name ?? 'Shopping list'}</h3>
 
-          <div className="search-row add-oneoff">
-            <input
-              placeholder="＋ Add one-off item (e.g. paper towels)…"
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addOneOff()}
-            />
-            <button className="btn btn-inline" onClick={addOneOff} disabled={!newItem.trim()}>
-              Add
-            </button>
+          <div className="add-card">
+            <div className="search-row add-oneoff">
+              <input
+                placeholder="＋ Add an item — start typing…"
+                value={newItem}
+                onChange={(e) => {
+                  setNewItem(e.target.value);
+                  setAddSel(undefined);
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && addSel && addOneOff()}
+              />
+            </div>
+            {addResults && (
+              <div className="autocomplete">
+                {addResults.map((h) => (
+                  <button key={h.id} className="autocomplete-row" onClick={() => pickAddItem(h)}>
+                    {h.name}
+                  </button>
+                ))}
+                {!addResults.some((h) => h.name.toLowerCase() === newItem.trim().toLowerCase()) && (
+                  <button
+                    className="autocomplete-row autocomplete-new"
+                    onClick={() => pickAddItem({ id: '', name: newItem.trim(), baseUnit: null })}
+                  >
+                    ＋ add “{newItem.trim()}”
+                  </button>
+                )}
+              </div>
+            )}
+            {addSel && (
+              <div className="sheet-row add-amount-row">
+                <input
+                  className="sheet-input"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={addQty}
+                  onChange={(e) => setAddQty(Number(e.target.value))}
+                />
+                <UnitSelect value={addUnit} onChange={setAddUnit} />
+                <button className="btn btn-inline" onClick={addOneOff} disabled={addQty <= 0}>
+                  Add
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="section-label">Whole list</div>
@@ -585,22 +753,57 @@ export function Shopping() {
                   <div className="page-head">
                     <div>
                       <div className="card-title">{it.canonicalItem.name}</div>
-                      <div className="card-sub">
-                        {formatImperial(Number(it.quantityNeeded), dimensionOf(it.unit as Unit))}
-                      </div>
+                      <button
+                        className="btn-link card-sub"
+                        title="Change the amount needed"
+                        onClick={() => {
+                          setEditItemId(editItemId === it.id ? undefined : it.id);
+                          setEditQty(Number(it.quantityNeeded));
+                          setEditUnit(it.unit);
+                        }}
+                      >
+                        {formatImperial(Number(it.quantityNeeded), dimensionOf(it.unit as Unit))} ✏️
+                      </button>
                     </div>
                     <div>
-                      <button className="btn-link" onClick={() => setScanItemId(it.id)} title="Scan a product to swap">
-                        📷 swap
+                      <button className="btn-link" onClick={() => opt && setSwapItem(opt)} disabled={!opt} title="Swap product">
+                        🔀 swap
                       </button>{' '}
                       <button
                         className="btn-link"
                         onClick={() => setCapturing(capturing === it.id ? undefined : it.id)}
                       >
                         {capturing === it.id ? 'close' : '💲 price'}
+                      </button>{' '}
+                      <button className="entry-x" title="Remove from list" onClick={() => deleteItem(it.id)}>
+                        ✕
                       </button>
                     </div>
                   </div>
+
+                  {editItemId === it.id && (
+                    <div className="sheet-row add-amount-row">
+                      <input
+                        className="sheet-input"
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={editQty}
+                        onChange={(e) => setEditQty(Number(e.target.value))}
+                      />
+                      <UnitSelect value={editUnit} onChange={setEditUnit} />
+                      <button
+                        className="btn btn-inline"
+                        onClick={() => {
+                          editItemAmount(it.id, editQty, editUnit);
+                          setEditItemId(undefined);
+                        }}
+                        disabled={editQty <= 0}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  )}
 
                   {chosen ? (
                     <div className="chosen">
@@ -642,24 +845,6 @@ export function Shopping() {
                     </div>
                   )}
 
-                  {opt && opt.options.length > 1 && (
-                    <select
-                      className="chip option-select"
-                      value={chosen?.productId ?? ''}
-                      onChange={(e) => {
-                        const o = opt.options.find((x) => x.productId === e.target.value);
-                        if (o) chooseOption(it.id, o);
-                      }}
-                    >
-                      {opt.options.map((o) => (
-                        <option key={o.productId} value={o.productId}>
-                          {o.providerName} · {o.brand ?? ''} {o.size ?? ''} · ${o.totalCost.toFixed(2)}
-                          {unitPriceLabel(o, it.unit)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-
                   {capturing === it.id && (
                     <PriceCapture
                       item={it}
@@ -675,6 +860,22 @@ export function Shopping() {
             })}
           </ul>
         </div>
+      )}
+
+      {swapItem && (
+        <SwapModal
+          item={swapItem}
+          unit={swapItem.unit}
+          onPick={(o) => {
+            chooseOption(swapItem.itemId, o);
+            setSwapItem(undefined);
+          }}
+          onScan={() => {
+            setScanItemId(swapItem.itemId);
+            setSwapItem(undefined);
+          }}
+          onClose={() => setSwapItem(undefined)}
+        />
       )}
 
       {scanItemId && (

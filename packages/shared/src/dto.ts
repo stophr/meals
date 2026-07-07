@@ -264,6 +264,8 @@ export const shoppingListItemUpdateSchema = z.object({
   assignedProviderId: cuid.nullish(),
   chosenProductId: cuid.nullish(),
   status: z.enum(['pending', 'bought', 'skipped']).optional(),
+  quantity: positive.optional(), // change the needed amount
+  unit: unitSchema.optional(), // change the unit (recomputes base quantity)
 });
 /** Add a one-off item to a shopping list by name (resolved to a canonical item). */
 export const shoppingListItemAddSchema = z.object({

@@ -215,7 +215,31 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.patch('/shopping-lists/:id/items/:itemId', async (req) => {
     const { itemId } = req.params as { itemId: string };
     const data = shoppingListItemUpdateSchema.parse(req.body);
-    return prisma.shoppingListItem.update({ where: { id: itemId }, data });
+    const patch: Record<string, unknown> = {
+      assignedProviderId: data.assignedProviderId,
+      chosenProductId: data.chosenProductId,
+      status: data.status,
+    };
+    // Changing the needed amount/unit re-derives the normalized base quantity.
+    if (data.quantity !== undefined || data.unit !== undefined) {
+      const existing = await prisma.shoppingListItem.findUniqueOrThrow({ where: { id: itemId } });
+      const qty = data.quantity ?? Number(existing.quantityNeeded);
+      const unit = data.unit ?? existing.unit;
+      patch.quantityNeeded = qty.toString();
+      patch.unit = unit;
+      patch.baseQuantityNeeded = toBaseQuantity(qty, unit).baseQuantity.toString();
+    }
+    for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+    return prisma.shoppingListItem.update({ where: { id: itemId }, data: patch });
+  });
+
+  app.delete('/shopping-lists/:id/items/:itemId', async (req, reply) => {
+    const { id, itemId } = req.params as { id: string; itemId: string };
+    const household = await getHousehold(req);
+    await prisma.shoppingListItem.deleteMany({
+      where: { id: itemId, shoppingList: { id, householdId: household.id } },
+    });
+    reply.code(204);
   });
 
   // Per-item provider options (every store × size with a current price).

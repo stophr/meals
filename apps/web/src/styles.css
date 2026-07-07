@@ -170,6 +170,36 @@ body {
   font-weight: 600;
 }
 
+/* Shopping swap modal */
+.swap-sheet {
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+.swap-opts {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+.swap-opt {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.swap-opt:active {
+  background: var(--border);
+}
+
 /* Barcode scanner overlay */
 .scanner-overlay {
   position: fixed;
