@@ -174,11 +174,18 @@ export async function integrationRoutes(app: FastifyInstance) {
       return { message: 'Kroger not configured' };
     }
     const body = (req.body ?? {}) as { providerId?: string; shoppingListId?: string; itemIds?: string[] };
-    if (!body.providerId) {
-      reply.code(400);
-      return { message: 'providerId required' };
+    const household = await getHousehold(req);
+    let providerId = body.providerId;
+    if (!providerId) {
+      // Default to the org's connected Fry's/Kroger store.
+      const providers = await prisma.provider.findMany({ where: { householdId: household.id } });
+      providerId = providers.find((p) => krogerLocationId(p))?.id;
     }
-    const provider = await prisma.provider.findUniqueOrThrow({ where: { id: body.providerId } });
+    if (!providerId) {
+      reply.code(400);
+      return { message: 'No Fry’s store connected — link one in Settings first.' };
+    }
+    const provider = await prisma.provider.findUniqueOrThrow({ where: { id: providerId } });
 
     let itemIds = body.itemIds ?? [];
     if (body.shoppingListId) {

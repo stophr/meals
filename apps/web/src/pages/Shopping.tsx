@@ -478,6 +478,29 @@ export function Shopping() {
     setBuild(undefined);
   }
 
+  async function syncPrices() {
+    if (!selected) return;
+    setBusy(true);
+    setPriceMsg('Syncing Fry’s prices for this list… (a few seconds)');
+    try {
+      const r = await api.post<{ productsUpserted: number; pricesRecorded: number; unmatched: string[] }>(
+        '/integrations/kroger/sync-prices',
+        { shoppingListId: selected },
+      );
+      await api.post(`/shopping-lists/${selected}/auto-select`, { mode: 'total' });
+      await loadOptions(selected);
+      setBuild(undefined);
+      setPriceMsg(
+        `Synced ${r.pricesRecorded} prices (${r.productsUpserted} products).` +
+          (r.unmatched?.length ? ` No Fry’s match: ${r.unmatched.slice(0, 4).join(', ')}.` : ''),
+      );
+    } catch (e) {
+      setPriceMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function selectMode(mode: 'unit' | 'total', itemId?: string) {
     if (!selected) return;
     setBusy(true);
@@ -689,6 +712,9 @@ export function Shopping() {
 
           <div className="section-label">Whole list</div>
           <div className="chips">
+            <button className="chip" disabled={busy} onClick={syncPrices} title="Pull current Fry's products + prices for these items">
+              🔄 Sync Fry’s prices
+            </button>
             <button className="chip" disabled={busy} onClick={() => selectMode('total')}>
               💵 Best total (default)
             </button>
