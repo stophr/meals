@@ -854,8 +854,8 @@ export function Shopping() {
                   )}
 
                   <div className="item-footer">
-                    <button className="btn-link item-remove" onClick={() => deleteItem(it.id)}>
-                      ✕ remove
+                    <button className="item-remove" onClick={() => deleteItem(it.id)}>
+                      Remove
                     </button>
                   </div>
                 </li>
