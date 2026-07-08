@@ -42,6 +42,8 @@ const envSchema = z.object({
   PADDLE_OCR_URL: z.string().default('http://paddleocr:8000'),
 
   STORAGE_DIR: z.string().default('./storage'),
+  // Directory of cached catalog product images (<upc>.jpg), served at /product-images/:upc.
+  PRODUCT_IMAGE_DIR: z.string().default('/srv/product-images'),
   NODE_ENV: z.string().default('development'),
 
   // Passwordless auth (magic links). EMAIL DELIVERY IS STUBBED until pantrezy.com is live.

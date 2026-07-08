@@ -212,6 +212,46 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     return result;
   });
 
+  // Add a specific catalog Product (by UPC) to a list. Creates the list item on the product's
+  // canonical item, and remembers the brand as a preference so selection favors this product.
+  app.post('/shopping-lists/:id/add-product', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { upc, quantity, unit } = (req.body ?? {}) as { upc?: string; quantity?: number; unit?: string };
+    const household = await getHousehold(req);
+    if (!upc) {
+      reply.code(400);
+      return { message: 'upc required' };
+    }
+    const product = await prisma.product.findUnique({ where: { upc } });
+    if (!product) {
+      reply.code(404);
+      return { message: 'Not in catalog yet' };
+    }
+    const qty = quantity && quantity > 0 ? quantity : 1;
+    const u = (unit as never) ?? ('EACH' as never);
+    const base = toBaseQuantity(qty, u);
+    const item = await prisma.shoppingListItem.create({
+      data: {
+        shoppingListId: id,
+        canonicalItemId: product.canonicalItemId,
+        quantityNeeded: qty.toString(),
+        unit: u,
+        baseQuantityNeeded: base.baseQuantity.toString(),
+      },
+      include: { canonicalItem: true },
+    });
+    // Carry the brand intent into auto-selection.
+    if (product.brand) {
+      await prisma.brandPreference.upsert({
+        where: { householdId_canonicalItemId: { householdId: household.id, canonicalItemId: product.canonicalItemId } },
+        create: { householdId: household.id, canonicalItemId: product.canonicalItemId, brand: product.brand },
+        update: { brand: product.brand },
+      });
+    }
+    reply.code(201);
+    return item;
+  });
+
   app.patch('/shopping-lists/:id/items/:itemId', async (req) => {
     const { itemId } = req.params as { itemId: string };
     const data = shoppingListItemUpdateSchema.parse(req.body);

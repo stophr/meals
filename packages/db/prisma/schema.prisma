@@ -441,6 +441,7 @@ model Product {
   packUnit     Unit?
   baseQuantity Decimal? @db.Decimal(14, 4) // net contents in base units
   imageUrl     String?
+  imageCached  Boolean @default(false) // medium image downloaded to PRODUCT_IMAGE_DIR/<upc>.jpg
   descriptionSource    ProductSource @default(MANUAL)
   descriptionUpdatedAt DateTime      @default(now())
 

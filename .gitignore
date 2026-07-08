@@ -32,3 +32,6 @@ pnpm-debug.log*
 
 # test / coverage
 coverage/
+
+# Cached catalog images (host-side, bind-mounted into api)
+/data/

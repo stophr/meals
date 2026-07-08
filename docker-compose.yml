@@ -48,6 +48,8 @@ services:
       # Cloudflare Access: set both to log users in as their authenticated email.
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      # Cached catalog images live here (bind-mounted from ./data/product-images on the host).
+      PRODUCT_IMAGE_DIR: ${PRODUCT_IMAGE_DIR:-/srv/product-images}
       NODE_ENV: production
     extra_hosts:
       - 'host.docker.internal:host-gateway'
@@ -60,6 +62,8 @@ services:
       - '${API_HOST_PORT:-3001}:3001'
     volumes:
       - storage:/repo/apps/api/storage
+      # Catalog images: the host-run crawler writes here; the api serves them read-only.
+      - ./data/product-images:/srv/product-images:ro
 
   paddleocr:
     build:

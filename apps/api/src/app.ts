@@ -16,6 +16,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { substitutionRoutes } from './routes/substitutions.js';
+import { catalogRoutes } from './routes/catalog.js';
 import { authRoutes } from './routes/auth.js';
 
 export async function buildApp() {
@@ -51,6 +52,7 @@ export async function buildApp() {
   await app.register(ingestRoutes);
   await app.register(integrationRoutes);
   await app.register(substitutionRoutes);
+  await app.register(catalogRoutes);
   await app.register(authRoutes);
 
   return app;

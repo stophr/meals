@@ -1,9 +1,128 @@
 import { useEffect, useState } from 'react';
 import { formatImperial, dimensionOf } from '@meals/shared';
 import type { Unit } from '@meals/shared';
-import { api } from '../lib/api.js';
+import { api, apiBaseUrl } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
 import { BarcodeScanner } from '../components/BarcodeScanner.js';
+
+interface CatalogItem {
+  upc: string;
+  name: string;
+  brand: string | null;
+  size: string | null;
+  image: string | null;
+  imageCached: boolean;
+  canonicalItemId: string;
+  price: number | null;
+  priceProductId: string | null;
+}
+
+/** Search the full store catalog (100k+ items, with images) and tap to add to the list. */
+function CatalogSearch({
+  listId,
+  onAdded,
+  onClose,
+}: {
+  listId: string;
+  onAdded: (msg: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<CatalogItem[]>();
+  const [loading, setLoading] = useState(false);
+  const [added, setAdded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults(undefined);
+      return;
+    }
+    let live = true;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.get<{ items: CatalogItem[] }>(`/catalog?q=${encodeURIComponent(term)}`);
+        if (live) setResults(r.items);
+      } catch {
+        if (live) setResults([]);
+      } finally {
+        if (live) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  async function add(it: CatalogItem) {
+    try {
+      await api.post(`/shopping-lists/${listId}/add-product`, { upc: it.upc });
+      setAdded((s) => new Set(s).add(it.upc));
+      onAdded(`Added ${it.brand ? it.brand + ' ' : ''}${it.name}`);
+    } catch (e) {
+      onAdded(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const imgSrc = (it: CatalogItem) =>
+    it.imageCached ? `${apiBaseUrl}/product-images/${encodeURIComponent(it.upc)}` : it.image ?? undefined;
+
+  return (
+    <div className="sheet catalog-sheet">
+      <div className="sheet-title">Add from store catalog</div>
+      <div className="sheet-row">
+        <input
+          className="sheet-input sheet-input-wide"
+          placeholder="search the whole store — brand or item…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoFocus
+        />
+      </div>
+      <div className="catalog-results">
+        {loading && <p className="muted">Searching…</p>}
+        {results?.map((it) => (
+          <div key={it.upc} className="catalog-card">
+            {imgSrc(it) ? (
+              <img
+                className="catalog-img"
+                src={imgSrc(it)}
+                alt=""
+                loading="lazy"
+                onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+              />
+            ) : (
+              <div className="catalog-img catalog-img-empty" />
+            )}
+            <div className="catalog-info">
+              <div className="catalog-name">{it.name}</div>
+              <div className="muted catalog-meta">
+                {it.brand ?? '—'}
+                {it.size ? ` · ${it.size}` : ''}
+                {it.price != null ? ` · $${it.price.toFixed(2)}` : ''}
+              </div>
+            </div>
+            <button
+              className="btn btn-inline"
+              disabled={added.has(it.upc)}
+              onClick={() => add(it)}
+            >
+              {added.has(it.upc) ? '✓' : 'Add'}
+            </button>
+          </div>
+        ))}
+        {results && !loading && !results.length && (
+          <p className="muted">No matches yet — the catalog is still filling in.</p>
+        )}
+      </div>
+      <button className="chip" onClick={onClose}>
+        close
+      </button>
+    </div>
+  );
+}
 
 interface ListRow {
   id: string;
@@ -396,8 +515,14 @@ export function Shopping() {
   const [editItemId, setEditItemId] = useState<string>();
   const [editQty, setEditQty] = useState(1);
   const [editUnit, setEditUnit] = useState('EACH');
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   const refresh = () => setNonce((n) => n + 1);
+
+  async function refreshList(id: string) {
+    setDetail(await api.get<ListDetail>(`/shopping-lists/${id}`));
+    await loadOptions(id);
+  }
 
   async function loadOptions(id: string) {
     const res = await api.get<{ items: ItemWithOptions[] }>(`/shopping-lists/${id}/options`);
@@ -674,6 +799,9 @@ export function Shopping() {
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && addSel && addOneOff()}
               />
+              <button className="btn btn-inline" onClick={() => setCatalogOpen(true)}>
+                🛒 Catalog
+              </button>
             </div>
             {addResults && (
               <div className="autocomplete">
@@ -911,6 +1039,17 @@ export function Shopping() {
         <BarcodeScanner
           onDetected={(code) => substituteByScan(scanItemId, code)}
           onClose={() => setScanItemId(undefined)}
+        />
+      )}
+
+      {catalogOpen && selected && (
+        <CatalogSearch
+          listId={selected}
+          onAdded={async (msg) => {
+            setPriceMsg(msg);
+            await refreshList(selected);
+          }}
+          onClose={() => setCatalogOpen(false)}
         />
       )}
     </section>

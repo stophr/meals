@@ -2,6 +2,9 @@ import { createClient } from '@meals/shared';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3001';
 
+// Base for building non-fetch URLs (e.g. <img src>) that hit the API directly.
+export const apiBaseUrl = baseUrl;
+
 // Recover from an expired Cloudflare Access session.
 //
 // The app is a PWA behind Cloudflare Access. Once the Access session expires, the service

@@ -1382,3 +1382,55 @@ select.chip {
   padding: 3px 0;
   border-bottom: 1px solid var(--border);
 }
+
+/* Full-catalog search sheet (100k+ store items with images) */
+.catalog-sheet {
+  max-height: min(80vh, 620px);
+  display: flex;
+  flex-direction: column;
+}
+.catalog-results {
+  margin-top: 10px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.catalog-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.catalog-img {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+}
+.catalog-img-empty {
+  background: var(--border);
+}
+.catalog-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.catalog-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.catalog-meta {
+  font-size: 0.8rem;
+  margin-top: 2px;
+}

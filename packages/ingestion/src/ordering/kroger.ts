@@ -194,13 +194,15 @@ export function mapProduct(p: RawProduct): KrogerProduct {
 export async function searchProducts(
   cfg: KrogerConfig,
   token: string,
-  opts: { term: string; locationId: string; limit?: number; timeoutMs?: number },
+  opts: { term: string; locationId: string; limit?: number; start?: number; timeoutMs?: number },
 ): Promise<KrogerProduct[]> {
   const params = new URLSearchParams({
     'filter.term': opts.term.slice(0, 128),
     'filter.locationId': opts.locationId,
     'filter.limit': String(opts.limit ?? 8),
   });
+  // Kroger caps filter.start at 250 (offset paging); callers page 0,50,…,200 for full coverage.
+  if (opts.start && opts.start > 0) params.set('filter.start', String(Math.min(opts.start, 250)));
   const res = await fetch(`${apiBase(cfg)}/products?${params}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
     signal: AbortSignal.timeout(opts.timeoutMs ?? 15000),
