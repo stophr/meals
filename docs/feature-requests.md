@@ -7,6 +7,18 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | 1 | "Suggested" recipes — household-taste recommendations at top of Recipes | beta tester | **shipped** (2026-07-04) | S–M | no |
 | 2 | Scan a UPC with phone camera to add a pantry item | beta tester | **shipped + device-verified** (2026-07-05) | M | `CanonicalItem.upcs[]` |
 | 3 | Brand preferencing + richer scanned product data (brand, pack size, better names, pricing) | beta tester | **shipped** (2026-07-06) — corpus+nutrition, then brand preferencing + on-the-fly list swaps | M–L | `Product`, `BrandPreference` |
+| 4 | Integrate with oven — preheat / set temp+time from a recipe | owner | idea | L | maybe (device link) |
+| 5 | Reschedule a locked meal-plan day, or cancel it & return its ingredients to pantry | owner | idea | M | likely (`MealPlanEntry` lock + reservations) |
+| 6 | Mark cart as purchased → stock pantry + record prices, close list | owner | idea | M | maybe (`ShoppingList.status`) |
+| 7 | Staple rebuy thresholds — suggest/auto-add when a staple drops below a min | owner | idea | M | yes (`StapleThreshold`) |
+| 8 | Default expiration numbers — auto-fill shelf life on pantry add | owner | idea | S–M | yes (shelf-life per item/category) |
+| 9 | Chatbot — natural-language "text to operation" over the API | owner | idea | L | no (LLM tool-calls existing endpoints) |
+| 10 | Gamify recipe sharing & adoption | owner | idea | M–L | yes (points/badges/share attribution) |
+| 11 | Gamify LLM/voice features (talking to the app) | owner | idea | M | yes (shared gamification) |
+| 12 | Check off list items while shopping | owner | idea | S | no (reuse item `status`) |
+| 13 | Add one-off items / staples to a list | owner | idea | S | maybe (household staples set) |
+| 14 | Generate shopping list by appending to locked days (not replacing) | owner | idea | M | ties to #5 |
+| 15 | Integrate with Siri & Alexa (voice) | owner | idea | L | no (Shortcuts + Alexa skill + token) |
 
 ---
 
@@ -90,3 +102,59 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 - **Size when OFF lacks it** — fall back to a second source (UPC databases) or infer from category defaults; today it's manual.
 
 **Effort:** M–L; brand preferencing alone is a standalone feature (schema + optimizer integration). Break out when prioritized.
+
+---
+
+# New requests (2026-07) — details
+
+Twelve requests from the owner. Grouped by theme; several share dependencies (noted). All `idea` status — this captures the ask + a first-pass approach, not a committed design.
+
+## Cluster A — Meal-plan control & list generation (#5, #14, feeds from #7)
+
+The through-line: meal-plan days can be **locked** (committed), and locking should drive inventory + list behavior.
+
+- **#5 — Reschedule or cancel a locked day.** Move a locked `MealPlanEntry` to another date, or cancel it and **return its reserved ingredients to the pantry**. Implies days can be locked and that locking *reserves* inventory (decrements available, or tags lots as committed). Reschedule = change the date, keep the reservation. Cancel = release the reservation back to `InventoryLot`. Needs: `MealPlanEntry.locked` (or a status enum) + a reservation model (either a `Reservation` join or a committed flag on lots). This is the anchor for the cluster.
+- **#14 — Generate list appending to locked days.** `generate-list` should **append** the ingredients required by locked days onto the existing shopping list instead of replacing it (aggregate needs − pantry − already-on-list). Depends on #5's locking. Today `POST /meal-plans/:id/generate-list` builds a fresh list; add an append/merge mode keyed to locked entries.
+- Sequencing: build **#5 (locking + reservation)** first; **#14** and the staple flow (#7) then plug into it.
+
+## Cluster B — Shopping completion (#6, #12, #13)
+
+Closing the loop from "list" → "bought" → "pantry."
+
+- **#12 — Check off list items while shopping.** Tap to mark an item bought as you walk the store. `ShoppingListItem.status` already exists (`pending`) — mostly a web interaction (checkbox + struck-through row + a "bought / remaining" count) + a `PATCH` to flip status. Smallest of the set; good warm-up.
+- **#6 — Mark cart as purchased.** One action to finalize a shopping trip: **stock the pantry** (create `InventoryLot`s from the checked/selected products, with pack size → quantity), **record prices** (the chosen options become `PriceObservation`s), and close/archive the list. Inverse of the existing `POST /inventory/consume` (FIFO deduct on cook). Needs a `purchased` state + the stock-on-purchase transaction. Pairs with #12 (check-off decides what actually got bought) and #8 (default expirations set the new lots' `expiresAt`).
+- **#13 — Add one-off items / staples.** Quick-add ad-hoc items (milk, paper towels) to a list without a recipe/plan. We already have `POST .../items` (typeahead) and `add-product` (catalog). This is mostly a **saved "staples" set** per household surfaced as one-tap chips ("＋ Milk ＋ Eggs ＋ Bread"). Overlaps with #7 (staples are the same entities that get rebuy thresholds).
+
+## Cluster C — Pantry automation (#7, #8)
+
+- **#8 — Default expiration numbers.** Auto-fill `InventoryLot.expiresAt` on pantry add from a default shelf-life. Store per-item (`CanonicalItem.defaultShelfLifeDays`) with a category fallback table; seed sensible defaults (produce ~7d, dairy ~14d, canned ~2y). Small, high-value for the expiry-driven consume logic that already exists.
+- **#7 — Staple rebuy thresholds.** Mark items as staples with a **minimum on-hand** (e.g. "always ≥ 1 gal milk"); when pantry drops below (via consume or a purchased-cart update), **suggest a rebuy** or auto-add to the active/next list. Needs `StapleThreshold (householdId, canonicalItemId, minQty, unit)` + a check that runs after inventory changes. Feeds Cluster A/B (the suggestions land on a list).
+
+## Cluster D — Conversational & voice (#9, #11, #15)
+
+All three are the same core: **map natural language → API operations**, then surface it through different front-ends.
+
+- **#9 — Chatbot ("text to operation").** An LLM with **tool-calling** over our existing endpoints ("add milk to my list", "what can I cook tonight", "mark the cart purchased"). We already run a local LLM (Ollama qwen2.5) + optional Anthropic. Build a tool-schema layer that whitelists safe operations + confirms mutations. No new domain schema — it drives existing routes. This is the foundation for #11 and #15.
+- **#15 — Siri & Alexa.** Voice front-ends onto #9's operation layer: **iOS Siri Shortcuts** can call our API directly (per-household token); an **Alexa skill** needs account-linking + an endpoint. Needs a stable auth token for headless callers. Build after #9 so both share one intent→operation core.
+- **#11 — Gamify talking to the app.** Rewards for using the chatbot/voice (streaks, "power user" badges). Depends on #9 existing + Cluster E's gamification substrate.
+
+## Cluster E — Gamification (#10, #11)
+
+- **#10 — Gamify recipe sharing & adoption.** Points/badges when a recipe you shared gets **adopted** (favorited/cooked) by other households. Needs share attribution (who introduced a recipe), an adoption signal, and a points/achievements model — cross-org, so it touches the shared recipe corpus + a new `Achievement`/`Points` layer.
+- **#11** (also above) reuses that substrate for LLM/voice engagement. Build the **points/achievements core once** (Cluster E), then #10 and #11 are events into it.
+
+## Standalone — Hardware (#4)
+
+- **#4 — Oven integration.** Send a recipe's temp/time to a smart oven (preheat, set mode/timer). Gated by **oven-brand APIs** (GE SmartHQ, June, Samsung SmartThings, etc.) — each is a separate OAuth + device integration, and coverage is spotty. Likely the largest/riskiest and most external-dependency-bound item; keep as a stretch until a specific oven brand is in play. A brand-agnostic "send to oven" abstraction over one integration first.
+
+## Rough build order (dependency-aware, when prioritized)
+
+1. **#12** (check-off) — small, self-contained, immediate value.
+2. **#8** (default expirations) — small, feeds #6.
+3. **#5** (locked-day locking + reservations) — anchors #14.
+4. **#6** (mark purchased → stock pantry + prices) — uses #8/#12.
+5. **#7** (staple thresholds) + **#13** (staples quick-add) — share the staples entity.
+6. **#14** (append to locked days) — needs #5.
+7. **#9** (chatbot operation layer) → **#15** (Siri/Alexa) on top.
+8. **Cluster E core** → **#10**, **#11**.
+9. **#4** (oven) — stretch, external-API-bound.
