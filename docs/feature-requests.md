@@ -19,6 +19,7 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | 13 | Add one-off items / staples to a list | owner | idea | S | maybe (household staples set) |
 | 14 | Generate shopping list by appending to locked days (not replacing) | owner | idea | M | ties to #5 |
 | 15 | Integrate with Siri & Alexa (voice) | owner | idea | L | no (Shortcuts + Alexa skill + token) |
+| 16 | Diet option — personalized regimen from age, activity level & taste profile | owner (multiple requests) | idea | L | yes (`DietProfile` per user + targets) |
 
 ---
 
@@ -146,6 +147,21 @@ All three are the same core: **map natural language → API operations**, then s
 ## Standalone — Hardware (#4)
 
 - **#4 — Oven integration.** Send a recipe's temp/time to a smart oven (preheat, set mode/timer). Gated by **oven-brand APIs** (GE SmartHQ, June, Samsung SmartThings, etc.) — each is a separate OAuth + device integration, and coverage is spotty. Likely the largest/riskiest and most external-dependency-bound item; keep as a stretch until a specific oven brand is in play. A brand-agnostic "send to oven" abstraction over one integration first.
+
+## Cluster F — Nutrition & diet (#16)
+
+- **#16 — Diet option (personalized regimen).** Multiple users have asked for a recommended eating regimen tailored to **age, activity level, and taste profile**. This is a strong fit for what we already have: **per-serving recipe nutrition** (from the `Product`/nutrition corpus + recipe nutrition compute), **taste-profile learning** (the #1 suggested-recipes engine already weights cuisine/category/tags from favorites + meal-plan history), and **meal-plan generation**.
+
+  **Approach (phased):**
+  1. **Profile + targets.** Collect age, sex, height, weight, activity level, and a goal (maintain / lose / gain). Compute a daily **calorie target** (Mifflin–St Jeor BMR × activity multiplier ± goal delta) and a **macro split** by chosen diet style (balanced / high-protein / Mediterranean / low-carb / etc.). Show the targets.
+  2. **Recommend to targets.** Filter/rank the recipe corpus by fit to the calorie/macro targets **and** taste affinity (reuse `decorateRecipe`/suggested scoring) — "meals that fit your day and your taste."
+  3. **Generate a regimen.** Produce a day/week meal plan whose per-serving nutrition sums toward the targets (extend `generate-list`/meal-plan generation with a nutrition-aware objective), which then flows into shopping lists.
+
+  **Schema:** `DietProfile` keyed **per User** (age/activity/goal are personal), not per household — but meal planning is household-level, so multi-person households need a reconciliation strategy (per-person servings/targets, or plan for a chosen member, or aggregate). Store computed targets (calories + macro grams) on the profile so scoring is cheap. Ties to [[tenancy-architecture]] (Users exist under Household).
+
+  **Guardrail:** this is health-adjacent — present as **general guidance, not medical/clinical advice**, with a visible disclaimer; avoid diagnosis/medical claims and let users override targets. LLM (#9) could gather the profile conversationally, but the calorie/macro math should be deterministic (formula), not model-guessed.
+
+  **Effort:** L. Phase 1 (profile + targets) is self-contained and shippable alone; phases 2–3 build on existing suggested-recipes + meal-plan machinery.
 
 ## Rough build order (dependency-aware, when prioritized)
 
