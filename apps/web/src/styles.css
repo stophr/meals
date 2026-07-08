@@ -1434,3 +1434,38 @@ select.chip {
   font-size: 0.8rem;
   margin-top: 2px;
 }
+
+/* Diet profile panel (#16) */
+.diet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  margin: 6px 0 10px;
+}
+.diet-height {
+  display: flex;
+  gap: 6px;
+}
+.diet-height input {
+  width: 100%;
+}
+.diet-targets {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.diet-cal {
+  font-size: 1.15rem;
+}
+.diet-macros {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.diet-disclaimer {
+  display: block;
+  margin-top: 10px;
+}

@@ -141,9 +141,78 @@ model User {
   isAppAdmin  Boolean   @default(false)
   createdAt   DateTime  @default(now())
 
-  sessions Session[]
+  sessions    Session[]
+  dietProfile DietProfile?
 
   @@index([householdId])
+}
+
+// ---- Diet profiles (feature #16). The macro splits + goal deltas are PROVISIONAL until a
+// registered dietitian reviews them (DietStyle.rdReviewed). Calorie math is standard
+// (Mifflin–St Jeor). Guidance only — not medical advice. ----
+
+enum BiologicalSex {
+  FEMALE
+  MALE
+}
+
+enum ActivityLevel {
+  SEDENTARY // little/no exercise
+  LIGHT // 1–3 days/week
+  MODERATE // 3–5 days/week
+  ACTIVE // 6–7 days/week
+  VERY_ACTIVE // hard daily exercise / physical job
+}
+
+enum DietGoal {
+  LOSE
+  MAINTAIN
+  GAIN
+}
+
+// A selectable eating regimen expressed as a calorie-macro split. Seeded provisionally; the RD
+// edits the percentages/notes and flips rdReviewed once vetted.
+model DietStyle {
+  id          String  @id @default(cuid())
+  key         String  @unique // "balanced", "high_protein", …
+  name        String
+  description String
+  proteinPct  Int // % of calories from protein (proteinPct + carbPct + fatPct should = 100)
+  carbPct     Int
+  fatPct      Int
+  sortOrder   Int     @default(0)
+  rdReviewed  Boolean @default(false) // true once the dietitian signs off on the numbers
+  notes       String? // RD guidance / caveats
+
+  profiles  DietProfile[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One per user (age/activity/goal are personal). Targets are cached, recomputed on every save.
+model DietProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  birthYear     Int?
+  sex           BiologicalSex?
+  heightCm      Decimal?       @db.Decimal(6, 2)
+  weightKg      Decimal?       @db.Decimal(6, 2)
+  activityLevel ActivityLevel?
+  goal          DietGoal       @default(MAINTAIN)
+
+  dietStyleId String?
+  dietStyle   DietStyle? @relation(fields: [dietStyleId], references: [id], onDelete: SetNull)
+
+  // Cached targets (null until enough inputs). Recomputed server-side on save.
+  targetCalories Int?
+  proteinG       Int?
+  carbG          Int?
+  fatG           Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Passwordless auth. A magic link is emailed; following it consumes the link and mints a

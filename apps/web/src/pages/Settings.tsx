@@ -608,6 +608,205 @@ function KrogerPanel() {
   );
 }
 
+interface DietStyle {
+  id: string;
+  name: string;
+  description: string;
+  proteinPct: number;
+  carbPct: number;
+  fatPct: number;
+  rdReviewed: boolean;
+  notes: string | null;
+}
+interface DietProfile {
+  birthYear: number | null;
+  sex: 'FEMALE' | 'MALE' | null;
+  heightCm: string | null;
+  weightKg: string | null;
+  activityLevel: string | null;
+  goal: string;
+  dietStyleId: string | null;
+  targetCalories: number | null;
+  proteinG: number | null;
+  carbG: number | null;
+  fatG: number | null;
+  dietStyle?: DietStyle | null;
+}
+
+const ACTIVITY_OPTS: [string, string][] = [
+  ['SEDENTARY', 'Sedentary (little/no exercise)'],
+  ['LIGHT', 'Light (1–3 days/wk)'],
+  ['MODERATE', 'Moderate (3–5 days/wk)'],
+  ['ACTIVE', 'Active (6–7 days/wk)'],
+  ['VERY_ACTIVE', 'Very active (daily hard / physical job)'],
+];
+const GOAL_OPTS: [string, string][] = [
+  ['LOSE', 'Lose weight'],
+  ['MAINTAIN', 'Maintain'],
+  ['GAIN', 'Gain weight'],
+];
+
+/** Per-user diet profile (feature #16). Collects US units, stores metric; targets computed server-side. */
+function DietPanel() {
+  const [styles, setStyles] = useState<DietStyle[]>();
+  const [profile, setProfile] = useState<DietProfile | null>();
+  const [age, setAge] = useState('');
+  const [sex, setSex] = useState('');
+  const [ft, setFt] = useState('');
+  const [inch, setInch] = useState('');
+  const [lb, setLb] = useState('');
+  const [activity, setActivity] = useState('');
+  const [goal, setGoal] = useState('MAINTAIN');
+  const [styleId, setStyleId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>();
+
+  useEffect(() => {
+    api.get<DietStyle[]>('/diet-styles').then(setStyles).catch(() => {});
+    api
+      .get<{ profile: DietProfile | null }>('/diet-profile')
+      .then(({ profile: p }) => {
+        setProfile(p);
+        if (!p) return;
+        if (p.birthYear) setAge(String(new Date().getFullYear() - p.birthYear));
+        if (p.sex) setSex(p.sex);
+        if (p.heightCm) {
+          const totalIn = Number(p.heightCm) / 2.54;
+          setFt(String(Math.floor(totalIn / 12)));
+          setInch(String(Math.round(totalIn % 12)));
+        }
+        if (p.weightKg) setLb(String(Math.round(Number(p.weightKg) / 0.453592)));
+        if (p.activityLevel) setActivity(p.activityLevel);
+        setGoal(p.goal ?? 'MAINTAIN');
+        if (p.dietStyleId) setStyleId(p.dietStyleId);
+      })
+      .catch(() => setProfile(null));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setMsg(undefined);
+    try {
+      const year = new Date().getFullYear();
+      const heightCm = ft ? Math.round((Number(ft) * 12 + Number(inch || 0)) * 2.54 * 10) / 10 : null;
+      const weightKg = lb ? Math.round(Number(lb) * 0.453592 * 10) / 10 : null;
+      const { profile: p } = await api.post<{ profile: DietProfile }>('/diet-profile', {
+        birthYear: age ? year - Number(age) : null,
+        sex: sex || null,
+        heightCm,
+        weightKg,
+        activityLevel: activity || null,
+        goal,
+        dietStyleId: styleId || null,
+      });
+      setProfile(p);
+      setMsg(p.targetCalories ? 'Saved ✓' : 'Saved — fill in age, sex, height, weight & activity to see targets.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const t = profile;
+  return (
+    <div className="card add-card">
+      <div className="section-label">🥗 Your diet profile</div>
+      <p className="card-sub muted">
+        Personalized calorie & macro targets from your body stats, activity, and chosen regimen.
+      </p>
+
+      <div className="diet-grid">
+        <label className="field">
+          <span>Age</span>
+          <input type="number" inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Sex (for calorie formula)</span>
+          <select value={sex} onChange={(e) => setSex(e.target.value)}>
+            <option value="">—</option>
+            <option value="FEMALE">Female</option>
+            <option value="MALE">Male</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Height</span>
+          <span className="diet-height">
+            <input type="number" inputMode="numeric" placeholder="ft" value={ft} onChange={(e) => setFt(e.target.value)} />
+            <input type="number" inputMode="numeric" placeholder="in" value={inch} onChange={(e) => setInch(e.target.value)} />
+          </span>
+        </label>
+        <label className="field">
+          <span>Weight (lb)</span>
+          <input type="number" inputMode="numeric" value={lb} onChange={(e) => setLb(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Activity level</span>
+          <select value={activity} onChange={(e) => setActivity(e.target.value)}>
+            <option value="">—</option>
+            {ACTIVITY_OPTS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Goal</span>
+          <select value={goal} onChange={(e) => setGoal(e.target.value)}>
+            {GOAL_OPTS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Diet regimen</span>
+        <select value={styleId} onChange={(e) => setStyleId(e.target.value)}>
+          <option value="">— none —</option>
+          {styles?.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.proteinPct}P/{s.carbPct}C/{s.fatPct}F)
+            </option>
+          ))}
+        </select>
+        {styleId && styles && (
+          <small className="muted">{styles.find((s) => s.id === styleId)?.description}</small>
+        )}
+      </label>
+
+      <button className="btn" onClick={save} disabled={busy}>
+        Save profile
+      </button>
+      {msg && <p className="notice">{msg}</p>}
+
+      {t?.targetCalories && (
+        <div className="diet-targets">
+          <div className="diet-cal">
+            <strong>{t.targetCalories}</strong> kcal/day
+          </div>
+          {t.proteinG != null && (
+            <div className="diet-macros">
+              <span>Protein <strong>{t.proteinG}g</strong></span>
+              <span>Carbs <strong>{t.carbG}g</strong></span>
+              <span>Fat <strong>{t.fatG}g</strong></span>
+            </div>
+          )}
+          {t.dietStyle && !t.dietStyle.rdReviewed && (
+            <small className="muted">“{t.dietStyle.name}” macros are provisional — pending dietitian review.</small>
+          )}
+        </div>
+      )}
+      <small className="muted diet-disclaimer">
+        General guidance only — not medical advice. Diet regimens are being reviewed by a registered dietitian.
+      </small>
+    </div>
+  );
+}
+
 export function Settings() {
   const [data, setData] = useState<SettingsData>();
   const [saved, setSaved] = useState(false);
@@ -639,6 +838,7 @@ export function Settings() {
     <section className="page">
       <h2>Settings</h2>
       <OrgPanel />
+      <DietPanel />
       <KrogerPanel />
       <SubstitutionsPanel />
       <label className="field">

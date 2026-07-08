@@ -148,7 +148,21 @@ async function main() {
     },
   });
 
-  console.log(`Seeded household ${household.id} with 2 providers, 3 items, 1 recipe.`);
+  // Diet styles (feature #16) — provisional macro splits, pending dietitian review.
+  const dietStyles = [
+    { key: 'balanced', name: 'Balanced', proteinPct: 20, carbPct: 50, fatPct: 30, sortOrder: 1, description: 'General-purpose balanced macros.' },
+    { key: 'high_protein', name: 'High-Protein', proteinPct: 35, carbPct: 40, fatPct: 25, sortOrder: 2, description: 'Higher protein for satiety and muscle retention.' },
+    { key: 'lower_carb', name: 'Lower-Carb', proteinPct: 30, carbPct: 25, fatPct: 45, sortOrder: 3, description: 'Reduced carbohydrate, higher fat.' },
+    { key: 'keto', name: 'Keto', proteinPct: 20, carbPct: 5, fatPct: 75, sortOrder: 4, description: 'Very low carb, high fat.' },
+    { key: 'mediterranean', name: 'Mediterranean', proteinPct: 20, carbPct: 45, fatPct: 35, sortOrder: 5, description: 'Mediterranean pattern: whole foods, olive oil, fish, legumes.' },
+    { key: 'plant_based', name: 'Plant-Based', proteinPct: 18, carbPct: 55, fatPct: 27, sortOrder: 6, description: 'Vegetarian / vegan pattern.' },
+    { key: 'performance', name: 'Performance', proteinPct: 25, carbPct: 50, fatPct: 25, sortOrder: 7, description: 'Higher carbohydrate for endurance and high activity.' },
+  ];
+  for (const s of dietStyles) {
+    await prisma.dietStyle.upsert({ where: { key: s.key }, create: s, update: s });
+  }
+
+  console.log(`Seeded household ${household.id} with 2 providers, 3 items, 1 recipe, ${dietStyles.length} diet styles.`);
 }
 
 main()

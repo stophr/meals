@@ -19,7 +19,7 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | 13 | Add one-off items / staples to a list | owner | idea | S | maybe (household staples set) |
 | 14 | Generate shopping list by appending to locked days (not replacing) | owner | idea | M | ties to #5 |
 | 15 | Integrate with Siri & Alexa (voice) | owner | idea | L | no (Shortcuts + Alexa skill + token) |
-| 16 | Diet option — personalized regimen from age, activity level & taste profile | owner (multiple requests) | idea | L | yes (`DietProfile` per user + targets) |
+| 16 | Diet option — personalized regimen from age, activity level & taste profile | owner (multiple requests) | **Phase 1 shipped** (2026-07-08) — profile + targets; RD to review styles | L | `DietProfile`, `DietStyle` |
 
 ---
 
@@ -162,6 +162,12 @@ All three are the same core: **map natural language → API operations**, then s
   **Guardrail:** this is health-adjacent — present as **general guidance, not medical/clinical advice**, with a visible disclaimer; avoid diagnosis/medical claims and let users override targets. LLM (#9) could gather the profile conversationally, but the calorie/macro math should be deterministic (formula), not model-guessed.
 
   **Effort:** L. Phase 1 (profile + targets) is self-contained and shippable alone; phases 2–3 build on existing suggested-recipes + meal-plan machinery.
+
+  **Phase 1 — SHIPPED 2026-07-08.** `DietProfile` (per user: birthYear/sex/heightCm/weightKg/activityLevel/goal + cached targets) and `DietStyle` (seedable macro presets). `lib/dietTargets.ts` computes calories (Mifflin–St Jeor × activity ± goal delta, sex-based floor) + macro grams from the chosen style. `GET /diet-styles`, `GET/POST /diet-profile` (per current user via `getPrincipal`). Web: a "🥗 Your diet profile" panel in Settings (US units in, metric stored) that shows the calorie + P/C/F targets with a not-medical-advice disclaimer. Verified: 35yo male, 5'10", 180 lb, moderate, maintain, high-protein → 2720 kcal / 238P·272C·76F (matches hand-calc).
+
+  **For the RD:** the reviewable content is the 7 seeded `DietStyle` rows (macro %, name, description, `notes`) plus the goal deltas + calorie floors in `lib/dietTargets.ts` (`GOAL_DELTA`, `CALORIE_FLOOR`). All styles seed `rdReviewed=false`; the seed script preserves a row's numbers once `rdReviewed=true` so her edits aren't clobbered on re-seed. Provisional splits: Balanced 20/50/30, High-Protein 35/40/25, Lower-Carb 30/25/45, Keto 20/5/75, Mediterranean 20/45/35, Plant-Based 18/55/27, Performance 25/50/25.
+
+  **Phase 2–3 (open):** rank recipes to targets + taste; generate a nutrition-aware meal plan; multi-person household reconciliation.
 
 ## Rough build order (dependency-aware, when prioritized)
 
