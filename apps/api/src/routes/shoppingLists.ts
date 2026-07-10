@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@meals/db';
+import { prisma, PriceSource } from '@meals/db';
+import type { Unit } from '@meals/db';
 import { optimize } from '@meals/core';
 import {
   shoppingListCreateSchema,
@@ -453,6 +454,70 @@ export async function shoppingListRoutes(app: FastifyInstance) {
       grandTotal: Math.round(stores.reduce((s, g) => s + g.total, 0) * 100) / 100,
       unpriced,
     };
+  });
+
+  // "I bought this cart." Stock the pantry from the list (an InventoryLot per bought item, using
+  // the chosen product's pack size + brand), record what each cost as a PriceObservation, then
+  // close + archive the list. Items marked 'skipped' are left out. Idempotent-ish: re-running an
+  // already-done list is a no-op.
+  app.post('/shopping-lists/:id/purchase', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const household = await getHousehold(req);
+    const list = await prisma.shoppingList.findFirstOrThrow({
+      where: { id, householdId: household.id },
+      include: { items: true },
+    });
+    if (list.status === 'done') {
+      reply.code(409);
+      return { message: 'This list is already marked purchased.' };
+    }
+    const skipped = new Set(list.items.filter((i) => i.status === 'skipped').map((i) => i.id));
+    const options = await computeItemOptions(household.id, id);
+    const picks = options
+      .filter((it) => !skipped.has(it.itemId))
+      .map((it) => ({
+        it,
+        opt: it.options.find((o) => o.productId === it.chosenProductId) ?? it.options[0],
+      }))
+      .filter((x) => !!x.opt) as { it: (typeof options)[number]; opt: NonNullable<(typeof options)[number]['options'][number]> }[];
+
+    const productIds = picks.map((p) => p.opt.productId);
+    const pps = await prisma.providerProduct.findMany({ where: { id: { in: productIds } } });
+    const ppById = new Map(pps.map((p) => [p.id, p]));
+    const upcs = pps.map((p) => p.upc).filter((u): u is string => !!u);
+    const corpus = upcs.length
+      ? await prisma.product.findMany({ where: { upc: { in: upcs } }, select: { id: true, upc: true } })
+      : [];
+    const corpusIdByUpc = new Map(corpus.map((c) => [c.upc, c.id]));
+
+    let stocked = 0;
+    let pricesRecorded = 0;
+    await prisma.$transaction(async (tx) => {
+      for (const { it, opt } of picks) {
+        const pp = ppById.get(opt.productId);
+        if (!pp) continue;
+        const packBase = pp.baseQuantity ? Number(pp.baseQuantity) : 0;
+        await tx.inventoryLot.create({
+          data: {
+            householdId: household.id,
+            canonicalItemId: it.canonicalItemId,
+            productId: pp.upc ? corpusIdByUpc.get(pp.upc) ?? null : null,
+            quantity: opt.packsNeeded.toString(),
+            unit: (pp.packUnit ?? 'EACH') as Unit,
+            baseQuantity: (opt.packsNeeded * packBase).toString(),
+            brand: pp.brand ?? undefined,
+          },
+        });
+        stocked++;
+        await tx.priceObservation.create({
+          data: { providerProductId: pp.id, price: opt.price.toFixed(2), source: PriceSource.MANUAL },
+        });
+        pricesRecorded++;
+        await tx.shoppingListItem.update({ where: { id: it.itemId }, data: { status: 'bought' } });
+      }
+      await tx.shoppingList.update({ where: { id }, data: { status: 'done', archivedAt: new Date() } });
+    });
+    return { stocked, pricesRecorded };
   });
 
   app.delete('/shopping-lists/:id', async (req, reply) => {

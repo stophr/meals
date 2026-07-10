@@ -626,6 +626,27 @@ export function Shopping() {
     }
   }
 
+  async function markPurchased() {
+    if (!selected) return;
+    if (!window.confirm('Mark this cart purchased? It adds these items to your pantry, records prices, and closes the list.')) return;
+    setBusy(true);
+    setPriceMsg('Stocking your pantry…');
+    try {
+      const r = await api.post<{ stocked: number; pricesRecorded: number }>(
+        `/shopping-lists/${selected}/purchase`,
+        {},
+      );
+      setPriceMsg(`Purchased — added ${r.stocked} item(s) to your pantry and recorded ${r.pricesRecorded} price(s).`);
+      setSelected(undefined);
+      setDetail(undefined);
+      refresh();
+    } catch (e) {
+      setPriceMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function selectMode(mode: 'unit' | 'total', itemId?: string) {
     if (!selected) return;
     setBusy(true);
@@ -851,6 +872,9 @@ export function Shopping() {
             </button>
             <button className="chip active" disabled={busy} onClick={buildLists}>
               🧾 Build lists
+            </button>
+            <button className="chip" disabled={busy} onClick={markPurchased} title="Add these to your pantry + record prices, then close the list">
+              ✅ Mark purchased
             </button>
           </div>
           <p className="muted sheet-hint">

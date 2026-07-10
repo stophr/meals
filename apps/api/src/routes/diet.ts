@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '@meals/db';
 import type { ActivityLevel, BiologicalSex, DietGoal } from '@meals/db';
 import { getPrincipal } from '../lib/principal.js';
+import { getHousehold } from '../lib/household.js';
 import { computeDietTargets } from '../lib/dietTargets.js';
 
 const ACTIVITIES = ['SEDENTARY', 'LIGHT', 'MODERATE', 'ACTIVE', 'VERY_ACTIVE'];
@@ -10,6 +11,24 @@ const GOALS = ['LOSE', 'MAINTAIN', 'GAIN'];
 export async function dietRoutes(app: FastifyInstance) {
   // The selectable regimens (RD-reviewable). Public within the app; no household scoping needed.
   app.get('/diet-styles', async () => prisma.dietStyle.findMany({ orderBy: { sortOrder: 'asc' } }));
+
+  // Household reconciliation: the summed daily calorie target across all members with a profile,
+  // plus the per-person average the plan generator biases toward. Foundation for nutrition-aware
+  // planning when a household has multiple eaters.
+  app.get('/diet-profile/household', async (req) => {
+    const household = await getHousehold(req);
+    const rows = await prisma.dietProfile.findMany({
+      where: { user: { householdId: household.id }, targetCalories: { not: null } },
+      select: { targetCalories: true, user: { select: { displayName: true, email: true } } },
+    });
+    const dailyCalories = rows.reduce((s, r) => s + (r.targetCalories ?? 0), 0);
+    return {
+      members: rows.length,
+      dailyCalories: rows.length ? dailyCalories : null,
+      perPerson: rows.length ? Math.round(dailyCalories / rows.length) : null,
+      breakdown: rows.map((r) => ({ name: r.user.displayName ?? r.user.email, calories: r.targetCalories })),
+    };
+  });
 
   // Current user's diet profile (per person — age/activity are personal).
   app.get('/diet-profile', async (req) => {

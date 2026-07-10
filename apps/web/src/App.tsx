@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { HealthResponse } from '@meals/shared';
 import { api } from './lib/api.js';
@@ -8,6 +8,23 @@ import { Plan } from './pages/Plan.js';
 import { Inventory } from './pages/Inventory.js';
 import { Shopping } from './pages/Shopping.js';
 import { Settings } from './pages/Settings.js';
+import { RecipeDetailModal } from './components/RecipeDetailModal.js';
+
+/** Opens a recipe quick-look from a shared deep link (?recipe=<id>), on any tab. */
+function SharedRecipeHost() {
+  const [sp, setSp] = useSearchParams();
+  const id = sp.get('recipe');
+  if (!id) return null;
+  return (
+    <RecipeDetailModal
+      recipeId={id}
+      onClose={() => {
+        sp.delete('recipe');
+        setSp(sp, { replace: true });
+      }}
+    />
+  );
+}
 
 function Header() {
   const { data } = useApi<HealthResponse>(() => api.health(), []);
@@ -78,6 +95,7 @@ export function App() {
           </NavLink>
         ))}
       </nav>
+      <SharedRecipeHost />
     </div>
     </MemberGate>
   );

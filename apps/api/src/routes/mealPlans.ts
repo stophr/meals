@@ -12,6 +12,7 @@ import {
 } from '@meals/shared';
 import { getHousehold } from '../lib/household.js';
 import { pantryLots } from '../lib/inventory.js';
+import { batchCaloriesPerServing, mealFitScore } from '../lib/recipeCalories.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { materializeRules, activeRules } from '../lib/mealRules.js';
 import { lockedDays, dayKey } from '../lib/queue.js';
@@ -258,6 +259,55 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     reply.code(204);
   });
 
+  // Move a LOCKED meal (already shopped for) to a different day. Unlike PATCH this bypasses the
+  // lock guard — that's the point. The lock follows the meal (lockedByListId stays), so the new
+  // day becomes the locked one and the old day frees up (lockedDays is entry-based).
+  app.post('/meal-plans/:id/entries/:entryId/reschedule', async (req, reply) => {
+    const { entryId } = req.params as { entryId: string };
+    const { date } = (req.body ?? {}) as { date?: string };
+    if (!date) {
+      reply.code(400);
+      return { message: 'date required' };
+    }
+    return prisma.mealPlanEntry.update({
+      where: { id: entryId },
+      data: { date: new Date(date) },
+      include: {
+        recipe: { select: { id: true, name: true, externalRating: true, imageUrl: true, servings: true } },
+      },
+    });
+  });
+
+  // Cancel a meal and RETURN its ingredients to the pantry as inventory lots (the inverse of
+  // cooking, which consumes them). Scaled by the planned servings, like the cook path.
+  app.post('/meal-plans/:id/entries/:entryId/cancel-return', async (req) => {
+    const { entryId } = req.params as { entryId: string };
+    const household = await getHousehold(req);
+    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({
+      where: { id: entryId },
+      include: { recipe: { include: { ingredients: true } } },
+    });
+    const ratio = entry.servingsPlanned / (entry.recipe.servings || 1);
+    let returned = 0;
+    await prisma.$transaction(async (tx) => {
+      for (const ing of entry.recipe.ingredients) {
+        if (ing.optional || !ing.canonicalItemId || ing.baseQuantity == null) continue;
+        await tx.inventoryLot.create({
+          data: {
+            householdId: household.id,
+            canonicalItemId: ing.canonicalItemId,
+            quantity: (Number(ing.quantity) * ratio).toString(),
+            unit: ing.unit,
+            baseQuantity: (Number(ing.baseQuantity) * ratio).toString(),
+          },
+        });
+        returned++;
+      }
+      await tx.mealPlanEntry.delete({ where: { id: entryId } });
+    });
+    return { returned };
+  });
+
   app.delete('/meal-plans/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     await prisma.mealPlan.delete({ where: { id } });
@@ -372,6 +422,18 @@ export async function mealPlanRoutes(app: FastifyInstance) {
     }
 
     const pantry = await pantryLots(household.id);
+
+    // Nutrition-aware: when household members have diet targets, nudge toward recipes that
+    // portion well for one person's day (average member target — multi-person reconciliation).
+    const dietRows = await prisma.dietProfile.findMany({
+      where: { user: { householdId: household.id }, targetCalories: { not: null } },
+      select: { targetCalories: true },
+    });
+    const perPersonTarget = dietRows.length
+      ? Math.round(dietRows.reduce((s, d) => s + (d.targetCalories ?? 0), 0) / dietRows.length)
+      : null;
+    const calMap = perPersonTarget ? await batchCaloriesPerServing([...pool.keys()]) : new Map<string, number | null>();
+
     const scored = [...pool.values()].map((r) => {
       const cov = recipeCoverage(r.ingredients, pantry);
       const covFraction = cov.requiredCount > 0 ? cov.satisfiedCount / cov.requiredCount : 0;
@@ -392,6 +454,7 @@ export async function mealPlanRoutes(app: FastifyInstance) {
         else score -= 3;
         if (trusted) score += Math.min(1.5, (r.promoIngredients ?? 0) * 0.5);
       }
+      if (perPersonTarget) score += 1.5 * mealFitScore(calMap.get(r.id) ?? null, perPersonTarget);
       score += Math.random(); // jitter: regenerate -> different week
       return { r, score };
     });

@@ -8,8 +8,8 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | 2 | Scan a UPC with phone camera to add a pantry item | beta tester | **shipped + device-verified** (2026-07-05) | M | `CanonicalItem.upcs[]` |
 | 3 | Brand preferencing + richer scanned product data (brand, pack size, better names, pricing) | beta tester | **shipped** (2026-07-06) — corpus+nutrition, then brand preferencing + on-the-fly list swaps | M–L | `Product`, `BrandPreference` |
 | 4 | Integrate with oven — preheat / set temp+time from a recipe | owner | idea | L | maybe (device link) |
-| 5 | Reschedule a locked meal-plan day, or cancel it & return its ingredients to pantry | owner | idea | M | likely (`MealPlanEntry` lock + reservations) |
-| 6 | Mark cart as purchased → stock pantry + record prices, close list | owner | idea | M | maybe (`ShoppingList.status`) |
+| 5 | Reschedule a locked meal-plan day, or cancel it & return its ingredients to pantry | owner | **shipped** (2026-07-10) | M | no (reused entry lock) |
+| 6 | Mark cart as purchased → stock pantry + record prices, close list | owner | **shipped** (2026-07-10) | M | no |
 | 7 | Staple rebuy thresholds — suggest/auto-add when a staple drops below a min | owner | idea | M | yes (`StapleThreshold`) |
 | 8 | Default expiration numbers — auto-fill shelf life on pantry add | owner | idea | S–M | yes (shelf-life per item/category) |
 | 9 | Chatbot — natural-language "text to operation" over the API | owner | idea | L | no (LLM tool-calls existing endpoints) |
@@ -19,7 +19,9 @@ Backlog of user/beta-tester requests. Status: `idea` → `planned` → `in progr
 | 13 | Add one-off items / staples to a list | owner | idea | S | maybe (household staples set) |
 | 14 | Generate shopping list by appending to locked days (not replacing) | owner | idea | M | ties to #5 |
 | 15 | Integrate with Siri & Alexa (voice) | owner | idea | L | no (Shortcuts + Alexa skill + token) |
-| 16 | Diet option — personalized regimen from age, activity level & taste profile | owner (multiple requests) | **Phase 1 shipped** (2026-07-08) — profile + targets; RD to review styles | L | `DietProfile`, `DietStyle` |
+| 16 | Diet option — personalized regimen from age, activity level & taste profile | owner (multiple requests) | **Phase 1-3 shipped** (2026-07-08/10) — profile+targets, nutrition-fit ranking, plan bias, household reconciliation | L | `DietProfile`, `DietStyle` |
+| 17 | Click a recipe from the Plan to see what's in it | owner | **shipped** (2026-07-10) | S | no |
+| 18 | Share links from the app to recipes | owner | **shipped** (2026-07-10) — deep link + Web Share; CF-Access-gated recipients | S | no |
 
 ---
 
@@ -114,7 +116,7 @@ Twelve requests from the owner. Grouped by theme; several share dependencies (no
 
 The through-line: meal-plan days can be **locked** (committed), and locking should drive inventory + list behavior.
 
-- **#5 — Reschedule or cancel a locked day.** Move a locked `MealPlanEntry` to another date, or cancel it and **return its reserved ingredients to the pantry**. Implies days can be locked and that locking *reserves* inventory (decrements available, or tags lots as committed). Reschedule = change the date, keep the reservation. Cancel = release the reservation back to `InventoryLot`. Needs: `MealPlanEntry.locked` (or a status enum) + a reservation model (either a `Reservation` join or a committed flag on lots). This is the anchor for the cluster.
+- **#5 — Reschedule or cancel a locked day. SHIPPED 2026-07-10.** Reused the existing per-entry lock (`MealPlanEntry.lockedByListId`) — no reservation model needed. `POST /meal-plans/:id/entries/:entryId/reschedule {date}` moves a locked meal (bypasses the normal lock guard; the lock follows the meal). `POST …/cancel-return` deletes the entry and creates `InventoryLot`s for its recipe's ingredients scaled by `servingsPlanned/recipe.servings` — the inverse of the cook/consume path (skips optional/unlinked). Plan UI: tap a locked 🔒 tile → detail modal with a date picker ("Move day") + "Cancel & return ingredients to pantry". Verified: a 13-ingredient recipe returned 13 lots on cancel. Design note: purchasing (#6) stocks the pantry; cancel-return is a separate deliberate action, so they don't silently double-count.
 - **#14 — Generate list appending to locked days.** `generate-list` should **append** the ingredients required by locked days onto the existing shopping list instead of replacing it (aggregate needs − pantry − already-on-list). Depends on #5's locking. Today `POST /meal-plans/:id/generate-list` builds a fresh list; add an append/merge mode keyed to locked entries.
 - Sequencing: build **#5 (locking + reservation)** first; **#14** and the staple flow (#7) then plug into it.
 
@@ -123,7 +125,7 @@ The through-line: meal-plan days can be **locked** (committed), and locking shou
 Closing the loop from "list" → "bought" → "pantry."
 
 - **#12 — Check off list items while shopping.** Tap to mark an item bought as you walk the store. `ShoppingListItem.status` already exists (`pending`) — mostly a web interaction (checkbox + struck-through row + a "bought / remaining" count) + a `PATCH` to flip status. Smallest of the set; good warm-up.
-- **#6 — Mark cart as purchased.** One action to finalize a shopping trip: **stock the pantry** (create `InventoryLot`s from the checked/selected products, with pack size → quantity), **record prices** (the chosen options become `PriceObservation`s), and close/archive the list. Inverse of the existing `POST /inventory/consume` (FIFO deduct on cook). Needs a `purchased` state + the stock-on-purchase transaction. Pairs with #12 (check-off decides what actually got bought) and #8 (default expirations set the new lots' `expiresAt`).
+- **#6 — Mark cart as purchased. SHIPPED 2026-07-10.** `POST /shopping-lists/:id/purchase`: for each non-skipped item's chosen (or best) option it creates an `InventoryLot` (pack size × packsNeeded → quantity/baseQuantity, brand + corpus `productId` from the `ProviderProduct`), records the price as a `PriceObservation`, marks the item `bought`, then sets the list `status='done'` + archives it. Shopping UI: a "✅ Mark purchased" chip on the list. Verified: 2 priced items → 2 lots + 2 prices + list closed. Still pairs well with #12 (check-off) and #8 (default `expiresAt`) when those land.
 - **#13 — Add one-off items / staples.** Quick-add ad-hoc items (milk, paper towels) to a list without a recipe/plan. We already have `POST .../items` (typeahead) and `add-product` (catalog). This is mostly a **saved "staples" set** per household surfaced as one-tap chips ("＋ Milk ＋ Eggs ＋ Bread"). Overlaps with #7 (staples are the same entities that get rebuy thresholds).
 
 ## Cluster C — Pantry automation (#7, #8)
@@ -167,7 +169,7 @@ All three are the same core: **map natural language → API operations**, then s
 
   **For the RD:** the reviewable content is the 7 seeded `DietStyle` rows (macro %, name, description, `notes`) plus the goal deltas + calorie floors in `lib/dietTargets.ts` (`GOAL_DELTA`, `CALORIE_FLOOR`). All styles seed `rdReviewed=false`; the seed script preserves a row's numbers once `rdReviewed=true` so her edits aren't clobbered on re-seed. Provisional splits: Balanced 20/50/30, High-Protein 35/40/25, Lower-Carb 30/25/45, Keto 20/5/75, Mediterranean 20/45/35, Plant-Based 18/55/27, Performance 25/50/25.
 
-  **Phase 2–3 (open):** rank recipes to targets + taste; generate a nutrition-aware meal plan; multi-person household reconciliation.
+  **Phase 2–3 — SHIPPED 2026-07-10.** `lib/recipeCalories.ts#batchCaloriesPerServing` estimates per-serving calories for many recipes in a few queries (from each ingredient's canonical **reference product** nutrition + density via `crossConvert`), so it's cheap on hot paths. **Phase 2:** `GET /recipes/suggested` adds a `mealFitScore` nudge (recipes that portion to ~⅓ of your daily target float up) and returns `caloriesPerServing` + `dietFitPct`; the recipe quick-look modal + suggested cards show "🎯 N kcal · X% of your day". **Phase 3:** the meal-plan generator biases toward well-portioned recipes using the household's **per-person average** target (multi-person reconciliation); `GET /diet-profile/household` exposes the summed/averaged targets. **Data caveat:** only ~10 corpus products have nutrition today (it fills lazily), so the estimate is null for most recipes until a nutrition backfill runs — plumbing is correct (verified on banana desserts → 35–70 kcal/serving), it just needs data. Full day-level calorie *balancing* (vs per-meal fit) remains a later refinement.
 
 ## Rough build order (dependency-aware, when prioritized)
 

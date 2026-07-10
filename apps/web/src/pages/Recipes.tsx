@@ -46,6 +46,8 @@ interface RecipeRow {
     originalCanonicalItemId?: string | null;
   }[];
   coverage: RecipeCoverage;
+  caloriesPerServing?: number | null;
+  dietFitPct?: number | null;
 }
 
 interface Meta {
@@ -666,6 +668,11 @@ export function Recipes() {
                           .filter(Boolean)
                           .join(' · ') || '—'}
                   </div>
+                  {r.caloriesPerServing != null && (
+                    <div className="suggest-cal muted">
+                      🎯 {r.caloriesPerServing} kcal{r.dietFitPct != null ? ` · ${r.dietFitPct}% of your day` : ''}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

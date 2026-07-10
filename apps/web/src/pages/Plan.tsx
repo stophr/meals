@@ -12,6 +12,7 @@ import {
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
+import { RecipeDetailModal } from '../components/RecipeDetailModal.js';
 
 interface QueueEntry {
   id: string;
@@ -83,11 +84,13 @@ function MealTile({
   isTemplate,
   onRemove,
   onServings,
+  onOpen,
 }: {
   entry: QueueEntry;
   isTemplate?: boolean;
   onRemove: () => void;
   onServings: () => void;
+  onOpen?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: entry.id,
@@ -106,7 +109,14 @@ function MealTile({
       ) : (
         <div className="tile-img tile-img-fallback">{entry.recipe.name.slice(0, 1)}</div>
       )}
-      <div className="tile-body">
+      <div
+        className="tile-body tile-open"
+        title="Tap to see what's in it"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen?.();
+        }}
+      >
         <div className="tile-name">{entry.recipe.name}</div>
         <div className="tile-sub">
           {entry.recipe.externalRating != null && (
@@ -272,6 +282,8 @@ export function Plan() {
   const [dragging, setDragging] = useState<QueueEntry>();
   const [slot, setSlot] = useState('dinner');
   const [servingsFor, setServingsFor] = useState<string>();
+  const [detailFor, setDetailFor] = useState<QueueEntry>();
+  const [rescheduleDate, setRescheduleDate] = useState('');
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -407,6 +419,34 @@ export function Plan() {
     }
   }
 
+  // Move a locked meal (already shopped for) to a different day.
+  async function rescheduleLocked(e: QueueEntry, dateKey: string) {
+    if (!dateKey) return;
+    await run(async () => {
+      await api.post(`/meal-plans/${e.mealPlanId}/entries/${e.id}/reschedule`, {
+        date: `${dateKey}T12:00:00.000Z`,
+      });
+      setDetailFor(undefined);
+      setRescheduleDate('');
+      setMsg(`Moved “${e.recipe.name}” to ${dateKey}.`);
+      refresh();
+    });
+  }
+
+  // Cancel a locked meal and return its ingredients to the pantry.
+  async function cancelLockedReturn(e: QueueEntry) {
+    if (!window.confirm(`Cancel “${e.recipe.name}” and add its ingredients to your pantry?`)) return;
+    await run(async () => {
+      const r = await api.post<{ returned: number }>(
+        `/meal-plans/${e.mealPlanId}/entries/${e.id}/cancel-return`,
+        {},
+      );
+      setDetailFor(undefined);
+      setMsg(`Cancelled “${e.recipe.name}” — returned ${r.returned} ingredient(s) to your pantry.`);
+      refresh();
+    });
+  }
+
   async function setServings(e: QueueEntry, servings: number) {
     await run(async () => {
       await api.patch(`/meal-plans/${e.mealPlanId}/entries/${e.id}`, {
@@ -482,6 +522,7 @@ export function Plan() {
       isTemplate={isTemplate}
       onRemove={() => remove(e)}
       onServings={() => setServingsFor(servingsFor === e.id ? undefined : e.id)}
+      onOpen={() => setDetailFor(e)}
     />
   );
 
@@ -636,6 +677,41 @@ export function Plan() {
           entry={servingsEntry}
           onChange={(s) => setServings(servingsEntry, s)}
           onClose={() => setServingsFor(undefined)}
+        />
+      )}
+
+      {detailFor && (
+        <RecipeDetailModal
+          recipeId={detailFor.recipe.id}
+          onClose={() => {
+            setDetailFor(undefined);
+            setRescheduleDate('');
+          }}
+          footer={
+            detailFor.locked ? (
+              <div className="locked-actions">
+                <div className="section-label">🔒 Shopped for — locked</div>
+                <div className="sheet-row">
+                  <input
+                    className="sheet-input"
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                  />
+                  <button
+                    className="btn btn-inline"
+                    disabled={!rescheduleDate}
+                    onClick={() => rescheduleLocked(detailFor, rescheduleDate)}
+                  >
+                    Move day
+                  </button>
+                </div>
+                <button className="btn-link danger" onClick={() => cancelLockedReturn(detailFor)}>
+                  Cancel & return ingredients to pantry
+                </button>
+              </div>
+            ) : undefined
+          }
         />
       )}
     </section>

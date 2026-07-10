@@ -12,6 +12,8 @@ import {
 import { toBaseQuantity, dimensionOf } from '@meals/core';
 import { importRecipeFromUrl, searchMeals, getMeal } from '@meals/ingestion';
 import { getHousehold } from '../lib/household.js';
+import { getPrincipal } from '../lib/principal.js';
+import { batchCaloriesPerServing, mealFitScore } from '../lib/recipeCalories.js';
 import { recipeCoverage } from '../lib/coverage.js';
 import { pantryLots, consumeFromInventory } from '../lib/inventory.js';
 import { subMap, applySubs } from '../lib/substitutions.js';
@@ -227,6 +229,14 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.get('/recipes/suggested', async (req) => {
     const household = await getHousehold(req);
     const take = Math.min(Math.max(Number((req.query as { take?: string })?.take) || 12, 1), 40);
+    // Current user's daily calorie target — recipes that portion well against it get a nudge.
+    const principal = await getPrincipal(req);
+    const dp = await prisma.dietProfile.findUnique({
+      where: { userId: principal.userId },
+      select: { targetCalories: true },
+    });
+    const userTarget = dp?.targetCalories ?? null;
+    const fitPct = (cal: number | null) => (cal != null && userTarget ? Math.round((cal / userTarget) * 100) : null);
     const visible: Prisma.RecipeWhereInput = {
       OR: [{ isShared: true }, { householdId: household.id }],
     };
@@ -266,12 +276,19 @@ export async function recipeRoutes(app: FastifyInstance) {
         include: ingredientInclude,
         take: take * 4,
       });
+      const calMap0 = userTarget ? await batchCaloriesPerServing(rows.map((r) => r.id)) : new Map();
       const scored = rows.map((r) => {
         const { frac } = covFractionOf(r);
-        return { r, s: (r.externalRating ?? 3) + 2 * frac + Math.random() };
+        return { r, s: (r.externalRating ?? 3) + 2 * frac + 1.2 * mealFitScore(calMap0.get(r.id) ?? null, userTarget) + Math.random() };
       });
       scored.sort((a, b) => b.s - a.s);
-      return { reason: 'popular', items: scored.slice(0, take).map((x) => decorateRecipe(x.r, ctx)) };
+      return {
+        reason: 'popular',
+        items: scored.slice(0, take).map((x) => {
+          const cal = calMap0.get(x.r.id) ?? null;
+          return { ...decorateRecipe(x.r, ctx), caloriesPerServing: cal, dietFitPct: fitPct(cal) };
+        }),
+      };
     }
 
     // Learn cuisine / category / tag affinity from the signal recipes.
@@ -316,6 +333,7 @@ export async function recipeRoutes(app: FastifyInstance) {
       take: 600,
     });
 
+    const calMap = userTarget ? await batchCaloriesPerServing(candidates.map((c) => c.id)) : new Map();
     const scored = candidates.map((r) => {
       const { frac, cookable } = covFractionOf(r);
       const affinity =
@@ -331,11 +349,18 @@ export async function recipeRoutes(app: FastifyInstance) {
         0.3 * (r.externalRating ?? 3) * conf +
         2 * frac +
         (cookable ? 1 : 0) +
+        1.2 * mealFitScore(calMap.get(r.id) ?? null, userTarget) + // portions well for your day
         Math.random() * 0.5; // jitter so the shelf refreshes
       return { r, s };
     });
     scored.sort((a, b) => b.s - a.s);
-    return { reason: 'taste', items: scored.slice(0, take).map((x) => decorateRecipe(x.r, ctx)) };
+    return {
+      reason: 'taste',
+      items: scored.slice(0, take).map((x) => {
+        const cal = calMap.get(x.r.id) ?? null;
+        return { ...decorateRecipe(x.r, ctx), caloriesPerServing: cal, dietFitPct: fitPct(cal) };
+      }),
+    };
   });
 
   // ---- Backend recipe discovery (TheMealDB) ----
