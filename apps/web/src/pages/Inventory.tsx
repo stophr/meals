@@ -519,6 +519,7 @@ export function Inventory() {
         found: boolean;
         productId?: string;
         item?: ItemHit;
+        description?: string | null;
         brand?: string | null;
         imageUrl?: string | null;
         size?: { quantity: number; unit: string } | null;
@@ -539,11 +540,12 @@ export function Inventory() {
           setAddUnit(r.size.unit);
         }
         const bits = [
-          r.brand,
           r.size ? `${r.size.quantity} ${r.size.unit.toLowerCase()}` : null,
           r.nutrition?.calories != null ? `${Math.round(r.nutrition.calories)} cal/serving` : null,
         ].filter(Boolean);
-        setMsg(`Scanned: ${[r.item.name, ...bits].join(' · ')} — check the amount and tap Add.`);
+        // Show the specific Fry's product name (with brand) — not the generic ingredient name.
+        const scannedName = r.description ?? [r.brand, r.item.name].filter(Boolean).join(' ');
+        setMsg(`Scanned: ${[scannedName, ...bits].join(' · ')} — check the amount and tap Add.`);
       } else {
         setAddSel(undefined);
         setAddQuery('');
@@ -768,8 +770,9 @@ export function Inventory() {
             {catLots.map((lot) => (
               <li key={lot.id}>
                 {lot.product?.imageUrl && <img className="pantry-thumb" src={lot.product.imageUrl} alt="" />}
-                <span className="plan-recipe">{lot.canonicalItem.name}</span>
-                {lot.brand && <span className="muted"> · {lot.brand}</span>}
+                {/* Show the specific product name when we know it; else the generic ingredient + brand. */}
+                <span className="plan-recipe">{lot.product?.description ?? lot.canonicalItem.name}</span>
+                {!lot.product?.description && lot.brand && <span className="muted"> · {lot.brand}</span>}
                 {lot.location && <span className="muted"> · {lot.location}</span>}
                 {lot.canonicalItem.assumeStocked && <span className="badge badge-ok">always</span>}
                 {expiryBadge(lot.expiresAt)}

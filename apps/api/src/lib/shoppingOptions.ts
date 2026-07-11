@@ -11,6 +11,7 @@ export interface ItemOption {
   providerId: string;
   providerName: string;
   productId: string;
+  name: string; // the store's specific product name (ProviderProduct.rawName)
   brand: string | null;
   size: string | null;
   price: number; // per pack
@@ -129,6 +130,7 @@ export async function computeItemOptions(
           providerId: provider.id,
           providerName: provider.name,
           productId: product.id,
+          name: product.rawName,
           brand: product.brand,
           size: product.sizeText,
           price: Number(price.price),

@@ -152,6 +152,7 @@ interface ItemOption {
   providerId: string;
   providerName: string;
   productId: string;
+  name: string;
   brand: string | null;
   size: string | null;
   price: number;
@@ -251,7 +252,7 @@ function SwapModal({
 }) {
   const [q, setQ] = useState('');
   const opts = item.options.filter((o) => {
-    const s = `${o.providerName} ${o.brand ?? ''} ${o.size ?? ''}`.toLowerCase();
+    const s = `${o.providerName} ${o.name ?? ''} ${o.brand ?? ''} ${o.size ?? ''}`.toLowerCase();
     return !q.trim() || s.includes(q.toLowerCase());
   });
   return (
@@ -273,7 +274,7 @@ function SwapModal({
         {opts.map((o) => (
           <button key={o.productId} className="swap-opt" onClick={() => onPick(o)}>
             <span>
-              <strong>{o.brand ?? '—'}</strong> {o.size ? <span className="muted">· {o.size}</span> : ''}
+              <strong>{o.name || o.brand || '—'}</strong> {o.size ? <span className="muted">· {o.size}</span> : ''}
             </span>
             <span>
               {o.providerName} · <strong>${o.totalCost.toFixed(2)}</strong>
@@ -983,8 +984,10 @@ export function Shopping() {
                   {chosen ? (
                     <div className="chosen">
                       <span className="badge badge-ok">{chosen.providerName}</span>{' '}
-                      {chosen.brand ? `${chosen.brand} · ` : ''}
-                      {chosen.size ? `${chosen.size} · ` : ''}
+                      {/* The specific product being bought (Fry's name incl. brand). */}
+                      {chosen.name ? <span className="chosen-name">{chosen.name}</span> : null}
+                      {chosen.size ? <span className="muted"> · {chosen.size}</span> : null}
+                      {' · '}
                       <strong>${chosen.totalCost.toFixed(2)}</strong>
                       <span className="muted">{unitPriceLabel(chosen, it.unit)}</span>
                     </div>
