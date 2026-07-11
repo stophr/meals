@@ -221,13 +221,17 @@ export async function getProductByUpc(
   upc: string,
   locationId?: string,
 ): Promise<KrogerProduct | null> {
-  const params = new URLSearchParams({ 'filter.productId': upc.replace(/\D/g, '') });
+  // Kroger's productId is a 13-digit UPC. A bare 12-digit UPC-A (or shorter) is rejected with a
+  // 400, so a scanned barcode must be left-zero-padded to 13 or Kroger never resolves it.
+  const digits = upc.replace(/\D/g, '');
+  const productId = digits.length < 13 ? digits.padStart(13, '0') : digits;
+  const params = new URLSearchParams({ 'filter.productId': productId });
   if (locationId) params.set('filter.locationId', locationId);
   const res = await fetch(`${apiBase(cfg)}/products?${params}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
     signal: AbortSignal.timeout(12000),
   });
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.status === 400) return null;
   if (!res.ok) throw new Error(`Kroger HTTP ${res.status} on /products byUpc: ${await res.text().catch(() => '')}`);
   const data = (await res.json()) as { data: RawProduct[] };
   const hit = (data.data ?? [])[0];
