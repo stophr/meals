@@ -57,6 +57,7 @@ async function main() {
   console.log(`Downloading medium images -> ${DIR} (concurrency ${CONCURRENCY}${ONCE ? ', single pass' : ', looping'})`);
   let ok = 0;
   let gone = 0;
+  let emptyPolls = 0;
   const started = Date.now();
 
   for (;;) {
@@ -66,16 +67,21 @@ async function main() {
       take: BATCH,
       orderBy: { updatedAt: 'desc' }, // freshest crawled first
     });
+    // Nothing to do right now. In --once mode that means we're done; while trailing a live crawl
+    // an empty batch is usually just a lull, so poll a while before concluding it's finished.
+    // (An empty batch always implies count == 0 — they share a filter — so we must NOT exit on
+    // the first empty poll, or a mid-crawl gap ends the worker early, as it did before.)
     if (!batch.length) {
-      const remaining = await prisma.product.count({ where: { imageCached: false, imageUrl: { not: null } } });
-      if (ONCE || remaining === 0) {
+      emptyPolls++;
+      if (ONCE || emptyPolls >= 20) {
         const total = await prisma.product.count({ where: { imageCached: true } });
         console.log(`\nDone. Cached this run: ${ok} ok, ${gone} missing. Total attempted: ${total}. ${Math.round((Date.now() - started) / 60000)}m`);
         break;
       }
-      await sleep(30_000); // wait for the crawler to add more
+      await sleep(30_000); // wait ~10 min of quiet (20 polls) before deciding the crawl is over
       continue;
     }
+    emptyPolls = 0;
 
     // Process the batch in small concurrent chunks.
     for (let i = 0; i < batch.length; i += CONCURRENCY) {
