@@ -311,6 +311,49 @@ export async function resolvePluProduct(rawCode: string, _householdId: string): 
 }
 
 /**
+ * Fill a corpus product's per-serving nutrition when it has none yet — for the batch backfill
+ * that lights up recipe/diet nutrition across the whole catalog. Kroger's zero-padded UPCs almost
+ * never resolve in USDA/OFF by barcode, but USDA search BY NAME (the product description) has
+ * broad coverage — so we go name-first, then USDA-by-UPC, then Open Food Facts by UPC. One-ish
+ * USDA call per product; the caller paces to the FDC hourly cap. Idempotent (only fills empties).
+ */
+export async function fillProductNutrition(p: {
+  id: string;
+  upc: string;
+  description: string;
+  nutritionSource: string | null;
+  baseQuantity: unknown;
+}): Promise<'filled' | 'skipped' | 'nodata'> {
+  if (p.nutritionSource) return 'skipped';
+  const cfg = { apiKey: env.USDA_FDC_API_KEY, baseUrl: env.USDA_FDC_API_BASE };
+  let cand: { n: Nutr; source: string } | null = null;
+
+  const byName = p.description ? await lookupUsdaByName(cfg, p.description).catch(() => null) : null;
+  if (byName && hasMacros(byName)) cand = { n: byName, source: 'USDA' };
+
+  if (!cand) {
+    const byUpc = await lookupUsdaByUpc(cfg, p.upc).catch(() => null);
+    if (byUpc && hasMacros(byUpc)) cand = { n: byUpc, source: 'USDA' };
+  }
+  if (!cand) {
+    const off = await lookupOpenFoodFacts(p.upc).catch(() => null);
+    if (off?.nutrition && hasMacros(off.nutrition)) cand = { n: off.nutrition, source: 'OFF' };
+  }
+  if (!cand) return 'nodata';
+
+  const write: Record<string, unknown> = {
+    ...nutritionFields(cand.n),
+    nutritionSource: cand.source,
+    nutritionUpdatedAt: new Date(),
+  };
+  const baseQ = p.baseQuantity != null ? Number(p.baseQuantity) : null;
+  const servBase = write.servingBaseQuantity != null ? Number(write.servingBaseQuantity) : null;
+  if (baseQ && servBase && servBase > 0) write.servingsPerContainer = (baseQ / servBase).toFixed(2);
+  await prisma.product.update({ where: { id: p.id }, data: write });
+  return 'filled';
+}
+
+/**
  * Insert/refresh a Kroger product into the corpus (used by the produce crawl). Sets the
  * description group from Kroger (top priority) + image; nutrition is left for scan-time USDA.
  */
