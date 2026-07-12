@@ -15,7 +15,7 @@ Store **price** stays on `ProviderProduct` + `PriceObservation` (per provider), 
 ## Sourcing & precedence (independent per field-group)
 
 Each `Product` records **where each field-group came from and when** (`descriptionSource` /
-`nutritionSource` + timestamps, enum `KROGER | STORE | USDA | OFF | MANUAL`). Two independent
+`nutritionSource` + timestamps, enum `KROGER | STORE | USDA | OFF | UPCITEMDB | IFPS | MANUAL`). Two independent
 precedence orders (in `apps/api/src/lib/productCorpus.ts`):
 
 | group | order | why |
@@ -23,9 +23,13 @@ precedence orders (in `apps/api/src/lib/productCorpus.ts`):
 | description / brand / size | **Fry's/Kroger → other stores → Open Food Facts → UPCitemdb** | Fry's is authoritative for the shelf; UPCitemdb is the last-resort long-tail source (great titles + images) but quota-limited, so it's only called when nothing else described the UPC |
 | nutrition (per serving) | **USDA FoodData Central → Open Food Facts** | Kroger's API doesn't return nutrition; USDA is authoritative, OFF fills gaps |
 
-**Images** travel with the description group: whichever source is available (Kroger, OFF, or
-UPCitemdb) supplies `Product.imageUrl`, backfilled onto the row when it has none. Shown as
-thumbnails in the pantry list and the scan-add card.
+**Images** strongly prefer **Kroger** (reliable, well-lit shots). `resolveProduct` sets/upgrades to
+a Kroger image whenever one is available — replacing a non-Kroger URL and clearing `imageCached` so
+it re-downloads — and only uses OFF/UPCitemdb imagery when Kroger has none. Images are stored **per
+`Product` row** (each row's `imageUrl` + a local cache file `data/product-images/<upc>.jpg`, served
+at `/api/product-images/:upc`), so duplicate rows imply duplicate images. Shown as thumbnails in the
+pantry list, scan-add card, and catalog search. (Project preference: Kroger data beats Open Food
+Facts, which is a last resort.)
 
 **Write rule:** a field-group is overwritten only by an **equal-or-higher-priority** source, so
 Fry's is never downgraded by OFF, and a re-pull from the same source refreshes in place. `MANUAL`
@@ -33,13 +37,36 @@ outranks everything (user edits are never clobbered).
 
 ## Resolve flow (`resolveProduct(upc, householdId)`)
 
-1. **Local `Product`** by UPC. If it already has nutrition → return it, **no network** (re-scans are instant).
+1. **Local `Product`** — look up BOTH the scanned UPC and its **Kroger key** (see UPC matching
+   below) and prefer a `KROGER`-sourced row. Fast-path (no network) only when that row is already
+   `KROGER`-named **and** has nutrition; an OFF-named row still gets a Kroger re-check on re-scan.
 2. Otherwise fetch in parallel: **Kroger** by UPC (the org's Fry's location + app token) and **OFF**
    (description + nutriments); then **USDA** by UPC, else by name.
 3. Merge each field-group by precedence, upsert to the corpus, resolve/link the ingredient, set the
    ingredient's `referenceProductId` (for recipe-nutrition fallback) and default base unit.
 
 Scanning stores the resolved `productId` on the pantry lot and prefills brand + size (+ expiry input).
+
+### UPC matching — the check-digit gotcha
+
+Kroger indexes products by the **UPC-A base without its check digit, zero-padded to 13** — box UPC
+`041449403205` → Kroger `0004144940320` (NOT the naive pad `0041449403205`). A barcode scanner emits
+a UPC-A as **12 OR 13 digits** (with a leading zero), and neither matched Kroger's form — so scans
+used to miss both Kroger live *and* our crawled corpus row and fall back to OFF (wrong name, and
+often a *serving* size stored as the pack weight, e.g. cornbread 35 g vs real 425 g).
+`krogerProductKey(upc)` (`lib/upcUtil.ts`) normalizes any check-digit-bearing form (12/13/14) by
+dropping the check digit and padding to 13; both `getProductByUpc` (live) and `resolveProduct`
+(corpus lookup) use it. `scripts/dedup-off-products.ts` merges pre-fix OFF duplicates into their
+Kroger twin (repoint `InventoryLot`/`CanonicalItem` refs, delete the OFF row + its orphan image);
+OFF rows with no Kroger twin (items Fry's doesn't carry) are kept.
+
+### Size parsing
+
+Fry's returns size as a **string** ("6 cans / 12 fl oz", "12 ct", "1/2 gal"), stored raw as
+`sizeText`; `parseQuantityText` (`lib/upcUtil.ts`) derives `packSize`/`packUnit`/`baseQuantity` from
+it — handling multipacks (N×M), "N x M", fractions, and count packs (→ EACH), with a `\b` after the
+measure alternation so "g" can't match inside "gal". `scripts/reparse-sizes.ts` re-derives the whole
+corpus from the stored strings (no API calls) after parser changes.
 
 ## Produce PLU codes (loose fruit/veg)
 
@@ -94,6 +121,29 @@ that have a linked product — i.e. that have been **scanned/stocked at least on
 the corpus fills. (The rejected alternative would have used generic USDA-by-name profiles for every
 ingredient regardless of stock.)
 
+## Catalog crawl, local images, nutrition backfill (2026-07)
+
+Beyond scan-time enrichment, the corpus is **pre-populated** from Fry's so users can search/build
+lists from the whole store and recipes get nutrition:
+
+- **Catalog crawl** (`scripts/crawl-kroger-catalog.ts`) — Kroger has no bulk dump, so it sweeps a
+  broad term dictionary (canonical names + a grocery/brand seed + IFPS produce words), paginated,
+  deduped via `ingestKrogerProduct`, into `Product`. Reached ~35k products. Resumable checkpoint;
+  respects the Products API daily cap. Feeds `Product` at `KROGER` source (the "updates preferenced
+  from Fry's beyond scan-time" path).
+- **Local images** (`scripts/download-product-images.ts`) — pre-download the medium image per
+  product to `data/product-images/<upc>.jpg`, bind-mounted into the api as `PRODUCT_IMAGE_DIR` and
+  served read-only. ~1 GB for the full catalog. Trails the crawl (poll-until-quiet, `--once` to
+  drain).
+- **Nutrition backfill** (`scripts/backfill-nutrition.ts`) — fills per-serving nutrition on the
+  products recipe nutrition actually reads (each canonical item's **reference product**) via
+  **USDA-by-name → OFF** (Kroger's zero-padded UPCs rarely resolve in USDA/OFF by barcode, but
+  by-name has broad coverage). Sweeps by an id cursor (no-data rows aren't retried), paced under the
+  FDC ~1000/hr cap, resumable via DB state. This is what lights up recipe/diet calories.
+- **Catalog search**: `GET /catalog?q=` (pg_trgm on description/brand) + `POST /shopping-lists/:id/add-product`.
+
+These are host-run background jobs (nohup); a reboot stops them — re-run to resume (all idempotent).
+
 ## Config / ops
 
 - **`USDA_FDC_API_KEY`** in `.env` (free key: https://fdc.nal.usda.gov/api-key-signup.html). Falls
@@ -104,9 +154,13 @@ ingredient regardless of stock.)
 - The old `CanonicalItem.upcs[]` cache was replaced by `Product` (dropped in the migration); the few
   previously-scanned UPCs re-enrich into the corpus on the next scan.
 
-## Deferred (see `feature-requests.md` #3)
+## Deferred / follow-ups
 
-- **Brand preferencing** — learn/prefer the brands an org buys (optimizer + list builder).
-- **Feed the corpus from `syncPrices`** — the Kroger price sync should also upgrade `Product`
-  description/size to `KROGER` source (the "updates preferenced from Fry's" path, beyond scan-time).
-- **Pricing from parsed pack size**; per-lot nutrition/expiry surfaced in the pantry list.
+- **Brand preferencing** — shipped (see `feature-requests.md` #3): `BrandPreference` + list-builder honoring.
+- **Feed the corpus from Fry's beyond scan-time** — done via the catalog crawl (above).
+- **Nutrition backfill quality** — USDA-by-name is approximate (occasional fuzzy mismatch); a
+  UPC-exact pass would be more precise where sources carry the pack UPC.
+- **`ProviderProduct` size parsing** — the price/optimizer path still uses `parseIngredientLine`
+  (core); give it the same multipack/count handling if pricing quantities look off.
+- **Pantry-lot size from a sized product** — when a lot's linked product has a real `packSize`,
+  adopt it (a one-off sync did this after the OFF→Kroger dedup; could be a standing cleanup).
