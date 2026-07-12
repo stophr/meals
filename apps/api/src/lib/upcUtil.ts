@@ -4,8 +4,8 @@
 /** Strip separators and validate as an 8/12/13/14-digit retail barcode. Returns null if bogus. */
 export function normalizeUpc(raw: string): string | null {
   const digits = (raw ?? '').replace(/\D/g, '');
-  // 8 = UPC-E, 11 = UPC-A base (no check digit), 12 = UPC-A, 13 = EAN-13, 14 = GTIN-14.
-  return /^\d{8}$|^\d{11,14}$/.test(digits) ? digits : null;
+  // 8 = UPC-E, 12 = UPC-A, 13 = EAN-13, 14 = GTIN-14 (all carry a check digit).
+  return /^\d{8}$|^\d{12,14}$/.test(digits) ? digits : null;
 }
 
 // Open Food Facts names are crowd-sourced and carry edition/packaging abbreviations that aren't
@@ -27,12 +27,10 @@ export const BASE_UNIT_FOR = { MASS: 'G', VOLUME: 'ML', COUNT: 'EACH' } as const
  */
 export function krogerProductKey(upc: string): string | null {
   const d = (upc ?? '').replace(/\D/g, '');
-  // Any form that carries a trailing check digit — UPC-A (12), EAN/GTIN-13, GTIN-14 — maps to the
-  // same key: drop the check digit and left-pad to 13. Scanners emit a UPC-A as 12 OR 13 digits
-  // (with a leading zero), so all of these must land on the identical Kroger key.
+  // Any scanned form that carries a trailing check digit — UPC-A (12), EAN/GTIN-13, GTIN-14 — maps
+  // to the same key: drop the check digit and left-pad to 13. Scanners emit a UPC-A as 12 OR 13
+  // digits (with a leading zero), so all of these must land on the identical Kroger key.
   if (d.length >= 12 && d.length <= 14) return d.slice(0, -1).padStart(13, '0');
-  // UPC-A base (11 digits, no check digit — what's printed as the "main" number on the box).
-  if (d.length === 11) return d.padStart(13, '0');
   return null;
 }
 
