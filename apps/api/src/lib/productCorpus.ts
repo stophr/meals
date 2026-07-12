@@ -20,7 +20,7 @@ import {
 import { krogerConfig, getAppToken, krogerLocationId } from './kroger.js';
 import { resolveCanonicalItem } from './resolveItem.js';
 import { lookupOpenFoodFacts } from './offProduct.js';
-import { cleanOffName, parseQuantityText, unitWord, BASE_UNIT_FOR } from './upcUtil.js';
+import { cleanOffName, parseQuantityText, unitWord, BASE_UNIT_FOR, krogerProductKey } from './upcUtil.js';
 import { env } from '../env.js';
 
 const DESC_RANK: Record<string, number> = { MANUAL: 5, KROGER: 4, STORE: 3, OFF: 2, UPCITEMDB: 1 };
@@ -176,10 +176,23 @@ async function backfillItem(itemId: string, product: NonNullable<ProductRow>) {
 }
 
 export async function resolveProduct(upc: string, householdId: string): Promise<ResolvedProduct> {
-  const existing = await prisma.product.findUnique({ where: { upc } });
+  // Match either the scanned UPC or its Kroger-format key (crawled Kroger rows are keyed without
+  // the check digit). Prefer a Kroger-sourced row — it has the accurate name + pack size — over a
+  // duplicate Open Food Facts row for the same barcode (which often carries a serving size or a
+  // truncated name).
+  const kKey = krogerProductKey(upc);
+  const candidates = await prisma.product.findMany({
+    where: { upc: { in: kKey && kKey !== upc ? [upc, kKey] : [upc] } },
+  });
+  const existing =
+    candidates.find((c) => c.descriptionSource === 'KROGER') ??
+    candidates.find((c) => c.upc === upc) ??
+    candidates[0] ??
+    null;
 
-  // Fast path: already enriched with nutrition — serve from the corpus, no network.
-  if (existing && existing.nutritionSource) return shape(existing);
+  // Fast path: already enriched with nutrition AND named by a trustworthy source — serve from the
+  // corpus, no network. (A low-source row, e.g. OFF, still gets a Kroger re-check below.)
+  if (existing && existing.nutritionSource && existing.descriptionSource === 'KROGER') return shape(existing);
 
   // Gather sources. Kroger (preferred description) + OFF (description + nutrition) in parallel.
   const [kro, off] = await Promise.all([

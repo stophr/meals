@@ -18,6 +18,21 @@ export function cleanOffName(name: string): string {
 
 export const BASE_UNIT_FOR = { MASS: 'G', VOLUME: 'ML', COUNT: 'EACH' } as const;
 
+/**
+ * Kroger indexes products by the UPC-A base WITHOUT its check digit, zero-padded to 13
+ * (UPC-A 041449403205 → 0004144940320). Scanned barcodes carry the check digit, so they must be
+ * converted to this form to match Kroger's productId (live API) AND our crawled corpus rows;
+ * otherwise a scan misses the good Kroger data and falls back to worse sources.
+ */
+export function krogerProductKey(upc: string): string | null {
+  const d = (upc ?? '').replace(/\D/g, '');
+  if (d.length === 12) return d.slice(0, 11).padStart(13, '0'); // UPC-A: drop the check digit
+  if (d.length === 11) return d.padStart(13, '0'); // base already missing the check digit
+  if (d.length === 14) return d.slice(1); // GTIN-14 → 13
+  if (d.length === 13) return d; // already 13 (EAN-13 / Kroger form)
+  return null;
+}
+
 /** Map a bare unit word ("g", "fl oz", "ml") to our Unit enum name, or null. */
 export function unitWord(w: string): string | null {
   const u = w.toLowerCase().replace(/[\s.]/g, '');
