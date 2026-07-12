@@ -224,8 +224,10 @@ export async function resolveProduct(upc: string, householdId: string): Promise<
           ? { source: 'UPCITEMDB', description: cleanOffName(upcdb.description), brand: upcdb.brand, sizeText: upcdb.sizeText, imageUrl: upcdb.imageUrl }
           : null;
 
-  // Image: take from the chosen description source, else whatever OFF/UPCitemdb gave us.
-  const image = descCand?.imageUrl ?? off?.imageUrl ?? upcdb?.imageUrl ?? null;
+  // Image: strongly prefer Kroger's (reliable, well-lit product shots). OFF/UPCitemdb imagery is
+  // only a last resort — the project de-prioritizes Open Food Facts data.
+  const krogerImage = kro?.imageUrl ?? null;
+  const fallbackImage = off?.imageUrl ?? upcdb?.imageUrl ?? null;
 
   // ---- nutrition candidate (USDA > OFF) ----
   const nutrCand: { n: Nutr; source: string } | null = usda
@@ -259,8 +261,16 @@ export async function resolveProduct(upc: string, householdId: string): Promise<
     });
   }
 
-  // Image is low-stakes: set it on create, or backfill when the corpus row has none yet.
-  if (image && (!existing || !existing.imageUrl)) write.imageUrl = image;
+  // Prefer a Kroger image: set on create, backfill when missing, AND upgrade a non-Kroger (e.g.
+  // OFF) image to Kroger when we now have one. Only use the fallback when Kroger has nothing and
+  // we have no image at all. A newly-set imageUrl clears the cached flag so it re-downloads.
+  const existingIsKroger = !!existing?.imageUrl && existing.imageUrl.includes('kroger.com');
+  if (krogerImage && !existingIsKroger) {
+    write.imageUrl = krogerImage;
+    if (existing && existing.imageUrl !== krogerImage) write.imageCached = false;
+  } else if (!existing?.imageUrl && fallbackImage) {
+    write.imageUrl = fallbackImage;
+  }
 
   const resolvedItem = await resolveCanonicalItem(description);
 
