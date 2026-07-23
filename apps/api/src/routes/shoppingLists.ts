@@ -11,12 +11,15 @@ import {
 } from '@meals/shared';
 import type { OptimizationResult } from '@meals/shared';
 import { toBaseQuantity } from '@meals/core';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 import { buildOptimizerInput } from '../lib/optimizerInput.js';
 import { buildShoppingList } from '../lib/shoppingBuild.js';
 import { noonToday, lockedDays, dayKey } from '../lib/queue.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { computeItemOptions, bestOption } from '../lib/shoppingOptions.js';
+import { findCorpusProduct } from '../lib/productCorpus.js';
+import { upcLookupForms } from '../lib/upcUtil.js';
 
 function dayLabel(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -79,8 +82,9 @@ export async function shoppingListRoutes(app: FastifyInstance) {
 
   app.get('/shopping-lists/:id', async (req) => {
     const { id } = req.params as { id: string };
-    return prisma.shoppingList.findUniqueOrThrow({
-      where: { id },
+    const household = await getHousehold(req);
+    return prisma.shoppingList.findFirstOrThrow({
+      where: { id, householdId: household.id },
       include: { items: { include: { canonicalItem: true } } },
     });
   });
@@ -151,6 +155,8 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.post('/shopping-lists/:id/archive', async (req) => {
     const { id } = req.params as { id: string };
     const { archived } = archiveSchema.parse(req.body ?? {});
+    const household = await requireEditor(req);
+    await owned(household.id).shoppingList(id);
     return prisma.shoppingList.update({
       where: { id },
       data: { archivedAt: archived ? new Date() : null },
@@ -161,7 +167,8 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.post('/shopping-lists/:id/items', async (req, reply) => {
     const { id } = req.params as { id: string };
     const data = shoppingListItemAddSchema.parse(req.body);
-    const household = await getHousehold(req);
+    const household = await requireEditor(req);
+    await owned(household.id).shoppingList(id);
     const resolved = await resolveCanonicalItem(data.name);
     const base = toBaseQuantity(data.quantity, data.unit);
     reply.code(201);
@@ -218,12 +225,14 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.post('/shopping-lists/:id/add-product', async (req, reply) => {
     const { id } = req.params as { id: string };
     const { upc, quantity, unit } = (req.body ?? {}) as { upc?: string; quantity?: number; unit?: string };
-    const household = await getHousehold(req);
+    const household = await requireEditor(req);
+    await owned(household.id).shoppingList(id);
     if (!upc) {
       reply.code(400);
       return { message: 'upc required' };
     }
-    const product = await prisma.product.findUnique({ where: { upc } });
+    // Both-forms lookup: crawled Kroger rows are keyed without the check digit.
+    const product = await findCorpusProduct(upc);
     if (!product) {
       reply.code(404);
       return { message: 'Not in catalog yet' };
@@ -256,6 +265,8 @@ export async function shoppingListRoutes(app: FastifyInstance) {
   app.patch('/shopping-lists/:id/items/:itemId', async (req) => {
     const { itemId } = req.params as { itemId: string };
     const data = shoppingListItemUpdateSchema.parse(req.body);
+    const household = await requireEditor(req);
+    const existing = await owned(household.id).shoppingListItem(itemId);
     const patch: Record<string, unknown> = {
       assignedProviderId: data.assignedProviderId,
       chosenProductId: data.chosenProductId,
@@ -263,7 +274,6 @@ export async function shoppingListRoutes(app: FastifyInstance) {
     };
     // Changing the needed amount/unit re-derives the normalized base quantity.
     if (data.quantity !== undefined || data.unit !== undefined) {
-      const existing = await prisma.shoppingListItem.findUniqueOrThrow({ where: { id: itemId } });
       const qty = data.quantity ?? Number(existing.quantityNeeded);
       const unit = data.unit ?? existing.unit;
       patch.quantityNeeded = qty.toString();
@@ -312,9 +322,10 @@ export async function shoppingListRoutes(app: FastifyInstance) {
 
     if (!chosen && body.upc) {
       const code = body.upc.replace(/\D/g, '');
+      // Both-forms match: ProviderProduct rows crawled from Kroger carry the check-digit-less key.
       const pp = await prisma.providerProduct.findFirst({
         where: {
-          upc: code,
+          upc: { in: upcLookupForms(code) },
           canonicalItemId: item.canonicalItemId,
           storeLocation: { providers: { some: { householdId: household.id } } },
         },
@@ -323,7 +334,7 @@ export async function shoppingListRoutes(app: FastifyInstance) {
       chosen = pp ? opts.find((o) => o.productId === pp.id) : undefined;
       if (!chosen) {
         // Scanned a product we don't stock — still learn the brand for next time.
-        const corpus = await prisma.product.findUnique({ where: { upc: code }, select: { brand: true } });
+        const corpus = await findCorpusProduct(code);
         if (corpus?.brand) {
           await saveBrand(corpus.brand);
           return { updated: false, savedBrand: corpus.brand, message: `Saved “${corpus.brand}” as your preference — no price for it at your stores yet.` };
@@ -522,6 +533,8 @@ export async function shoppingListRoutes(app: FastifyInstance) {
 
   app.delete('/shopping-lists/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).shoppingList(id);
     await prisma.shoppingList.delete({ where: { id } });
     reply.code(204);
   });

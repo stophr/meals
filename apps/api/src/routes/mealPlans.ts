@@ -10,7 +10,8 @@ import {
   moveEntrySchema,
   mealRuleCreateSchema,
 } from '@meals/shared';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 import { pantryLots } from '../lib/inventory.js';
 import { batchCaloriesPerServing, mealFitScore } from '../lib/recipeCalories.js';
 import { recipeCoverage } from '../lib/coverage.js';
@@ -51,8 +52,9 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.get('/meal-plans/:id', async (req) => {
     const { id } = req.params as { id: string };
-    return prisma.mealPlan.findUniqueOrThrow({
-      where: { id },
+    const household = await getHousehold(req);
+    return prisma.mealPlan.findFirstOrThrow({
+      where: { id, householdId: household.id },
       include: { entries: { include: { recipe: true } }, shoppingLists: true },
     });
   });
@@ -69,8 +71,9 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   app.post('/meal-plans/:id/entries', async (req, reply) => {
     const { id } = req.params as { id: string };
     const data = mealPlanEntryCreateSchema.parse(req.body);
+    const household = await requireEditor(req);
+    await owned(household.id).mealPlan(id);
     if (data.date) {
-      const household = await getHousehold(req);
       const locks = await lockedDays(household.id);
       if (locks.has(dayKey(data.date))) {
         reply.code(409);
@@ -112,12 +115,12 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   app.post('/meal-plans/:id/entries/:entryId/assign', async (req, reply) => {
     const { id, entryId } = req.params as { id: string; entryId: string };
     const { dates } = assignEntrySchema.parse(req.body);
-    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    const household = await requireEditor(req);
+    const entry = await owned(household.id).mealPlanEntry(entryId);
     if (entry.lockedByListId) {
       reply.code(409);
       return { message: 'This meal is locked — a shopping list already bought for it.' };
     }
-    const household = await getHousehold(req);
     const locks = await lockedDays(household.id);
     const blocked = dates.filter((d) => locks.has(dayKey(d)));
     if (blocked.length) {
@@ -181,6 +184,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.delete('/meal-rules/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).mealRule(id);
     await prisma.mealRule.delete({ where: { id } });
     reply.code(204);
   });
@@ -188,9 +193,9 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // Materialize active rules into an existing plan's date range (idempotent per recipe+date).
   app.post('/meal-plans/:id/apply-rules', async (req) => {
     const { id } = req.params as { id: string };
-    const household = await getHousehold(req);
-    const plan = await prisma.mealPlan.findUniqueOrThrow({
-      where: { id },
+    const household = await requireEditor(req);
+    const plan = await prisma.mealPlan.findFirstOrThrow({
+      where: { id, householdId: household.id },
       include: { entries: true },
     });
     const days = Math.max(1, Math.round((plan.endDate.getTime() - plan.startDate.getTime()) / DAY_MS) + 1);
@@ -221,13 +226,13 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   app.patch('/meal-plans/:id/entries/:entryId', async (req, reply) => {
     const { entryId } = req.params as { entryId: string };
     const patch = moveEntrySchema.parse(req.body);
-    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    const household = await requireEditor(req);
+    const entry = await owned(household.id).mealPlanEntry(entryId);
     if (entry.lockedByListId) {
       reply.code(409);
       return { message: 'This meal is locked — a shopping list already bought for it.' };
     }
     if (patch.date) {
-      const household = await getHousehold(req);
       const locks = await lockedDays(household.id);
       if (locks.has(dayKey(patch.date))) {
         reply.code(409);
@@ -250,7 +255,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.delete('/meal-plans/:id/entries/:entryId', async (req, reply) => {
     const { entryId } = req.params as { entryId: string };
-    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({ where: { id: entryId } });
+    const household = await requireEditor(req);
+    const entry = await owned(household.id).mealPlanEntry(entryId);
     if (entry.lockedByListId) {
       reply.code(409);
       return { message: 'This meal is locked — a shopping list already bought for it.' };
@@ -269,6 +275,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
       reply.code(400);
       return { message: 'date required' };
     }
+    const household = await requireEditor(req);
+    await owned(household.id).mealPlanEntry(entryId);
     return prisma.mealPlanEntry.update({
       where: { id: entryId },
       data: { date: new Date(date) },
@@ -282,9 +290,9 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   // cooking, which consumes them). Scaled by the planned servings, like the cook path.
   app.post('/meal-plans/:id/entries/:entryId/cancel-return', async (req) => {
     const { entryId } = req.params as { entryId: string };
-    const household = await getHousehold(req);
-    const entry = await prisma.mealPlanEntry.findUniqueOrThrow({
-      where: { id: entryId },
+    const household = await requireEditor(req);
+    const entry = await prisma.mealPlanEntry.findFirstOrThrow({
+      where: { id: entryId, mealPlan: { householdId: household.id } },
       include: { recipe: { include: { ingredients: true } } },
     });
     const ratio = entry.servingsPlanned / (entry.recipe.servings || 1);
@@ -310,6 +318,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
 
   app.delete('/meal-plans/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).mealPlan(id);
     await prisma.mealPlan.delete({ where: { id } });
     reply.code(204);
   });
@@ -546,8 +556,8 @@ export async function mealPlanRoutes(app: FastifyInstance) {
   app.post('/meal-plans/:id/generate-list', async (req) => {
     const { id } = req.params as { id: string };
     const household = await getHousehold(req);
-    const plan = await prisma.mealPlan.findUniqueOrThrow({
-      where: { id },
+    const plan = await prisma.mealPlan.findFirstOrThrow({
+      where: { id, householdId: household.id },
       include: {
         entries: {
           include: { recipe: { include: { ingredients: { include: { canonicalItem: true } } } } },

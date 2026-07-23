@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '@meals/db';
 import { substitutionCreateSchema } from '@meals/shared';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 
 export async function substitutionRoutes(app: FastifyInstance) {
   // Every substitution rule for the org (global + recipe-scoped), newest first.
@@ -61,6 +62,8 @@ export async function substitutionRoutes(app: FastifyInstance) {
   // Revert a rule.
   app.delete('/substitutions/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).substitution(id);
     await prisma.ingredientSubstitution.delete({ where: { id } });
     reply.code(204);
   });

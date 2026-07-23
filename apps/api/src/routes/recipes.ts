@@ -11,7 +11,8 @@ import {
 } from '@meals/shared';
 import { toBaseQuantity, dimensionOf } from '@meals/core';
 import { importRecipeFromUrl, searchMeals, getMeal } from '@meals/ingestion';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 import { getPrincipal } from '../lib/principal.js';
 import { batchCaloriesPerServing, mealFitScore } from '../lib/recipeCalories.js';
 import { recipeCoverage } from '../lib/coverage.js';
@@ -459,9 +460,10 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.post('/recipes/:id/cook', async (req) => {
     const { id } = req.params as { id: string };
     const body = cookRecipeSchema.parse(req.body ?? {});
-    const household = await getHousehold(req);
-    const recipe = await prisma.recipe.findUniqueOrThrow({
-      where: { id },
+    const household = await requireEditor(req);
+    // Own recipe, or any recipe from the global shared directory (cooking touches only own pantry).
+    const recipe = await prisma.recipe.findFirstOrThrow({
+      where: { id, OR: [{ householdId: household.id }, { isShared: true }] },
       include: ingredientInclude,
     });
     const ratio = (body.servings ?? recipe.servings) / (recipe.servings || 1);
@@ -489,8 +491,9 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.get('/recipes/:id', async (req) => {
     const { id } = req.params as { id: string };
     const household = await getHousehold(req);
-    const recipe = await prisma.recipe.findUniqueOrThrow({
-      where: { id },
+    // Own recipes plus the global shared directory — never another org's private recipe.
+    const recipe = await prisma.recipe.findFirstOrThrow({
+      where: { id, OR: [{ householdId: household.id }, { isShared: true }] },
       include: { ingredients: { include: { canonicalItem: true } } },
     });
     const [pantry, prices, subs, fav, nutrition] = await Promise.all([
@@ -552,6 +555,8 @@ export async function recipeRoutes(app: FastifyInstance) {
   app.patch('/recipes/:id', async (req) => {
     const { id } = req.params as { id: string };
     const data = recipeUpdateSchema.parse(req.body);
+    const household = await requireEditor(req);
+    await owned(household.id).recipe(id);
     return prisma.$transaction(async (tx) => {
       if (data.ingredients) {
         await tx.recipeIngredient.deleteMany({ where: { recipeId: id } });
@@ -584,6 +589,8 @@ export async function recipeRoutes(app: FastifyInstance) {
 
   app.delete('/recipes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).recipe(id);
     await prisma.recipe.delete({ where: { id } });
     reply.code(204);
   });

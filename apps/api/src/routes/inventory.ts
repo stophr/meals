@@ -9,7 +9,8 @@ import {
 } from '@meals/shared';
 import { toBaseQuantity, dimensionOf, parseIngredientLine } from '@meals/core';
 import { extractPantryFromText, extractPantryFromImage } from '@meals/ingestion';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 import { consumeFromInventory } from '../lib/inventory.js';
 import { resolveCanonicalItem } from '../lib/resolveItem.js';
 import { env } from '../env.js';
@@ -53,11 +54,12 @@ export async function inventoryRoutes(app: FastifyInstance) {
   app.patch('/inventory/:id', async (req) => {
     const { id } = req.params as { id: string };
     const data = inventoryUpdateSchema.parse(req.body);
+    const household = await requireEditor(req);
+    const existing = await owned(household.id).inventoryLot(id);
     const patch: Record<string, unknown> = { ...data };
     // Recompute the normalized base quantity whenever the amount OR the unit changes —
     // switching "50 each" to "50 lb" must re-derive baseQuantity, not keep the old count.
     if (data.quantity !== undefined || data.unit !== undefined) {
-      const existing = await prisma.inventoryLot.findUniqueOrThrow({ where: { id } });
       const qty = data.quantity ?? Number(existing.quantity);
       const unit = data.unit ?? existing.unit;
       patch.quantity = qty.toString();
@@ -71,6 +73,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
 
   app.delete('/inventory/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).inventoryLot(id);
     await prisma.inventoryLot.delete({ where: { id } });
     reply.code(204);
   });

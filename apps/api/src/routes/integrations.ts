@@ -18,7 +18,8 @@ import {
   parsedPriceOneSchema,
 } from '@meals/shared';
 import { chatJson } from '@meals/ingestion';
-import { getHousehold } from '../lib/household.js';
+import { getHousehold, requireEditor } from '../lib/household.js';
+import { owned } from '../lib/tenant.js';
 import { computeItemOptions } from '../lib/shoppingOptions.js';
 import { krogerConfig, krogerLocationId, getAppToken, getUserToken, syncPrices, ensureStoreLocationFor } from '../lib/kroger.js';
 import { recordCostcoPrices } from '../lib/costcoPrices.js';
@@ -287,11 +288,15 @@ export async function integrationRoutes(app: FastifyInstance) {
 
   app.post('/integrations/kroger/coupons/:id/approve', async (req) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).coupon(id);
     return prisma.krogerCoupon.update({ where: { id }, data: { status: 'approved' } });
   });
 
   app.post('/integrations/kroger/coupons/:id/dismiss', async (req) => {
     const { id } = req.params as { id: string };
+    const household = await requireEditor(req);
+    await owned(household.id).coupon(id);
     return prisma.krogerCoupon.update({ where: { id }, data: { status: 'dismissed' } });
   });
 
@@ -385,8 +390,9 @@ export async function integrationRoutes(app: FastifyInstance) {
   // ---- Walmart / Safeway assisted cart links (no middleman, first-party prices) ----
   app.get('/shopping-lists/:id/cart-links', async (req) => {
     const { id } = req.params as { id: string };
-    const list = await prisma.shoppingList.findUniqueOrThrow({
-      where: { id },
+    const household = await getHousehold(req);
+    const list = await prisma.shoppingList.findFirstOrThrow({
+      where: { id, householdId: household.id },
       include: { items: { include: { canonicalItem: true } } },
     });
     const items = list.items
