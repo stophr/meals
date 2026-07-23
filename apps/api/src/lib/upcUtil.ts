@@ -1,12 +1,9 @@
 // Small pure helpers for UPC/product handling, shared by the barcode route and the corpus
 // resolver (kept separate so those two don't import each other).
 
-/** Strip separators and validate as an 8/12/13/14-digit retail barcode. Returns null if bogus. */
-export function normalizeUpc(raw: string): string | null {
-  const digits = (raw ?? '').replace(/\D/g, '');
-  // 8 = UPC-E, 12 = UPC-A, 13 = EAN-13, 14 = GTIN-14 (all carry a check digit).
-  return /^\d{8}$|^\d{12,14}$/.test(digits) ? digits : null;
-}
+// Barcode identity (normalize + corpus key) lives in @meals/shared — one module owns the rule
+// for the API, the ingestion Kroger client, and the crawl/dedup scripts alike.
+export { normalizeUpc, krogerProductKey, upcLookupForms } from '@meals/shared';
 
 // Open Food Facts names are crowd-sourced and carry edition/packaging abbreviations that aren't
 // part of the product ("Vinegar apple cider imp"). Drop the worst offenders from the name we
@@ -18,21 +15,6 @@ export function cleanOffName(name: string): string {
 }
 
 export const BASE_UNIT_FOR = { MASS: 'G', VOLUME: 'ML', COUNT: 'EACH' } as const;
-
-/**
- * Kroger indexes products by the UPC-A base WITHOUT its check digit, zero-padded to 13
- * (UPC-A 041449403205 → 0004144940320). Scanned barcodes carry the check digit, so they must be
- * converted to this form to match Kroger's productId (live API) AND our crawled corpus rows;
- * otherwise a scan misses the good Kroger data and falls back to worse sources.
- */
-export function krogerProductKey(upc: string): string | null {
-  const d = (upc ?? '').replace(/\D/g, '');
-  // Any scanned form that carries a trailing check digit — UPC-A (12), EAN/GTIN-13, GTIN-14 — maps
-  // to the same key: drop the check digit and left-pad to 13. Scanners emit a UPC-A as 12 OR 13
-  // digits (with a leading zero), so all of these must land on the identical Kroger key.
-  if (d.length >= 12 && d.length <= 14) return d.slice(0, -1).padStart(13, '0');
-  return null;
-}
 
 /** Map a bare unit word ("g", "fl oz", "ml") to our Unit enum name, or null. */
 export function unitWord(w: string): string | null {

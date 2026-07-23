@@ -7,6 +7,7 @@
 // downgraded by OFF and a re-scan of an already-enriched product does no network I/O.
 
 import { prisma } from '@meals/db';
+import type { Product } from '@meals/db';
 import { toBaseQuantity, dimensionOf } from '@meals/core';
 import {
   getProductByUpc,
@@ -20,7 +21,7 @@ import {
 import { krogerConfig, getAppToken, krogerLocationId } from './kroger.js';
 import { resolveCanonicalItem } from './resolveItem.js';
 import { lookupOpenFoodFacts } from './offProduct.js';
-import { cleanOffName, parseQuantityText, unitWord, BASE_UNIT_FOR, krogerProductKey } from './upcUtil.js';
+import { cleanOffName, parseQuantityText, unitWord, BASE_UNIT_FOR, upcLookupForms } from './upcUtil.js';
 import { env } from '../env.js';
 
 const DESC_RANK: Record<string, number> = { MANUAL: 5, KROGER: 4, STORE: 3, OFF: 2, UPCITEMDB: 1 };
@@ -175,20 +176,27 @@ async function backfillItem(itemId: string, product: NonNullable<ProductRow>) {
   if (Object.keys(data).length) await prisma.canonicalItem.update({ where: { id: itemId }, data });
 }
 
-export async function resolveProduct(upc: string, householdId: string): Promise<ResolvedProduct> {
-  // Match either the scanned UPC or its Kroger-format key (crawled Kroger rows are keyed without
-  // the check digit). Prefer a Kroger-sourced row — it has the accurate name + pack size — over a
-  // duplicate Open Food Facts row for the same barcode (which often carries a serving size or a
-  // truncated name).
-  const kKey = krogerProductKey(upc);
+/**
+ * Corpus lookup by scanned UPC: match either the scanned form or its Kroger-format key (crawled
+ * Kroger rows are keyed without the check digit). Prefer a Kroger-sourced row — it has the
+ * accurate name + pack size — over a duplicate Open Food Facts row for the same barcode (which
+ * often carries a serving size or a truncated name). Every route that looks a scan up in the
+ * corpus must come through here, or Kroger-keyed rows silently miss.
+ */
+export async function findCorpusProduct(upc: string): Promise<Product | null> {
   const candidates = await prisma.product.findMany({
-    where: { upc: { in: kKey && kKey !== upc ? [upc, kKey] : [upc] } },
+    where: { upc: { in: upcLookupForms(upc) } },
   });
-  const existing =
+  return (
     candidates.find((c) => c.descriptionSource === 'KROGER') ??
     candidates.find((c) => c.upc === upc) ??
     candidates[0] ??
-    null;
+    null
+  );
+}
+
+export async function resolveProduct(upc: string, householdId: string): Promise<ResolvedProduct> {
+  const existing = await findCorpusProduct(upc);
 
   // Fast path: already enriched with nutrition AND named by a trustworthy source — serve from the
   // corpus, no network. (A low-source row, e.g. OFF, still gets a Kroger re-check below.)

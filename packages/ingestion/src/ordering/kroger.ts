@@ -5,6 +5,8 @@
 //   Cart:      add items to the signed-in user's actual cart (OAuth authorization-code)
 // Client-credentials tokens cover locations+products; the cart needs a user token.
 
+import { krogerProductKey } from '@meals/shared';
+
 const DEFAULT_API = 'https://api.kroger.com/v1';
 
 export interface KrogerConfig {
@@ -221,15 +223,11 @@ export async function getProductByUpc(
   upc: string,
   locationId?: string,
 ): Promise<KrogerProduct | null> {
-  // Kroger's productId is the UPC-A base WITHOUT its check digit, zero-padded to 13 (e.g. UPC-A
-  // 041449403205 → 0004144940320). A scanned barcode carries the check digit (as 12, 13, or 14
-  // digits), so drop it and pad — otherwise Kroger returns nothing and the scan uses a worse
-  // source. An 11-digit base already lacks the check digit.
+  // The check-digit-drop + pad-to-13 rule lives in @meals/shared (krogerProductKey) — the one
+  // owner for the API, corpus resolver, and crawl scripts. Fall back to a bare pad for
+  // out-of-spec lengths (a check-digit-less base is already in Kroger's form).
   const digits = upc.replace(/\D/g, '');
-  const productId =
-    digits.length >= 12 && digits.length <= 14
-      ? digits.slice(0, -1).padStart(13, '0')
-      : digits.padStart(13, '0');
+  const productId = krogerProductKey(digits) ?? digits.padStart(13, '0');
   const params = new URLSearchParams({ 'filter.productId': productId });
   if (locationId) params.set('filter.locationId', locationId);
   const res = await fetch(`${apiBase(cfg)}/products?${params}`, {
