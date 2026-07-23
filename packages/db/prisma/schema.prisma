@@ -707,6 +707,11 @@ model InventoryLot {
   unit         Unit
   baseQuantity Decimal  @db.Decimal(14, 4)
 
+  // The container's FULL capacity in base units — the anchor the ¼/½/¾/full "how much is left"
+  // control scales against. Seeded from the amount first entered (scan pre-fills net contents),
+  // and grown if a later edit exceeds it. Null on lots created before this feature.
+  fullBaseQuantity Decimal? @db.Decimal(14, 4)
+
   // What's physically on the shelf: brand is informational (the canonical item stays
   // store-agnostic for recipe/coverage math).
   brand       String?

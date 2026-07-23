@@ -31,6 +31,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const data = inventoryCreateSchema.parse(req.body);
     const household = await getHousehold(req);
     reply.code(201);
+    const base = toBaseQuantity(data.quantity, data.unit).baseQuantity;
     return prisma.inventoryLot.create({
       data: {
         householdId: household.id,
@@ -38,7 +39,9 @@ export async function inventoryRoutes(app: FastifyInstance) {
         productId: data.productId,
         quantity: data.quantity.toString(),
         unit: data.unit,
-        baseQuantity: toBaseQuantity(data.quantity, data.unit).baseQuantity.toString(),
+        baseQuantity: base.toString(),
+        // The amount first entered is the container's full capacity (scan pre-fills net contents).
+        fullBaseQuantity: (data.fullBaseQuantity ?? base).toString(),
         brand: data.brand,
         location: data.location,
         purchasedAt: data.purchasedAt,
@@ -60,6 +63,9 @@ export async function inventoryRoutes(app: FastifyInstance) {
       patch.quantity = qty.toString();
       patch.baseQuantity = toBaseQuantity(qty, unit).baseQuantity.toString();
     }
+    // Container capacity is a Decimal — stringify. The client sends max(existing capacity, new
+    // amount), so this also back-fills capacity on lots created before the fill-level feature.
+    if (data.fullBaseQuantity !== undefined) patch.fullBaseQuantity = data.fullBaseQuantity.toString();
     return prisma.inventoryLot.update({ where: { id }, data: patch });
   });
 

@@ -144,6 +144,7 @@ export const inventoryCreateSchema = z.object({
   productId: cuid.optional(), // the specific UPC container (from a scan)
   quantity: positive,
   unit: unitSchema,
+  fullBaseQuantity: positive.optional(), // container's full capacity in base units (fill-level anchor)
   brand: z.string().optional(),
   location: z.string().optional(),
   purchasedAt: z.coerce.date().optional(),

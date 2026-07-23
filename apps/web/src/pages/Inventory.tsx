@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { UNIT_TABLE, BASE_UNIT, dimensionOf } from '@meals/shared';
+import { UNIT_TABLE, BASE_UNIT, dimensionOf, toBaseQuantity } from '@meals/shared';
 import type { UnitDimension, Unit } from '@meals/shared';
 import { api } from '../lib/api.js';
 import { useApi } from '../lib/useApi.js';
@@ -47,6 +47,8 @@ function UnitSelect({
 interface Lot {
   id: string;
   quantity: string;
+  baseQuantity: string;
+  fullBaseQuantity?: string | null; // container's full capacity in base units (fill-level anchor)
   unit: string;
   brand?: string | null;
   location?: string | null;
@@ -98,10 +100,19 @@ function expiryBadge(expiresAt?: string | null) {
 export interface LotPatch {
   quantity: number;
   unit: string;
+  fullBaseQuantity?: number; // container capacity (base units) the fill-level control scales against
   brand?: string | null;
   location?: string;
   expiresAt?: string;
 }
+
+// "How much is left in the container" — coarse fractions of a full container.
+const FILL_LEVELS: { f: number; label: string }[] = [
+  { f: 0.25, label: '¼' },
+  { f: 0.5, label: '½' },
+  { f: 0.75, label: '¾' },
+  { f: 1, label: 'full' },
+];
 export interface ItemPatch {
   assumeStocked?: boolean;
   baseUnit?: string;
@@ -127,6 +138,13 @@ function LotSheet({
   const step = ['G', 'ML'].includes(unit) ? 50 : ['KG', 'L', 'LB'].includes(unit) ? 0.5 : 1;
   const dim = UNIT_TABLE[unit as keyof typeof UNIT_TABLE]?.dimension;
   const dimLabel = dim === 'MASS' ? 'by weight' : dim === 'VOLUME' ? 'by volume' : 'by count';
+  // Full-container capacity anchor (base units), fixed for the sheet's life so repeated fraction
+  // taps stay idempotent. Falls back to the current amount for lots predating this feature.
+  const [capBase] = useState(Number(lot.fullBaseQuantity ?? lot.baseQuantity));
+  const factor = UNIT_TABLE[unit as keyof typeof UNIT_TABLE]?.factor ?? 1;
+  const capInUnit = capBase / factor; // the full container, expressed in the selected unit
+  const activeFill = (f: number) =>
+    capInUnit > 0 && Math.abs(qty - f * capInUnit) <= Math.max(capInUnit * 0.01, 0.01);
 
   function save() {
     if (qty <= 0) return;
@@ -142,6 +160,8 @@ function LotSheet({
       {
         quantity: qty,
         unit,
+        // Persist the capacity anchor; grow it if the user typed more than a full container.
+        fullBaseQuantity: Math.max(capBase, toBaseQuantity(qty, unit as Unit).baseQuantity),
         brand: brand.trim() || null,
         location: location.trim() || undefined,
         expiresAt: expires || undefined,
@@ -170,6 +190,18 @@ function LotSheet({
         </button>
         <UnitSelect value={unit} onChange={setUnit} />
         <span className="muted">{dimLabel}</span>
+      </div>
+      <div className="sheet-row">
+        <span className="muted">how much is left?</span>
+        {FILL_LEVELS.map(({ f, label }) => (
+          <button
+            key={label}
+            className={`chip${activeFill(f) ? ' active' : ''}`}
+            onClick={() => setQty(+(f * capInUnit).toFixed(2))}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="sheet-row">
         <input
